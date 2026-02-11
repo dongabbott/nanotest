@@ -1,0 +1,18 @@
+id: smoke_login
+name: 登录主流程
+platform: android
+app: com.example.app
+route: /home
+steps:
+  - id: s1
+    action: launch
+  - id: s2
+    action: tap
+    target: login
+  - id: s3
+    action: input
+    target: username
+    value: demo_user
+  - id: s4
+    action: assert_visible
+    target: button_login
