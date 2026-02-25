@@ -10,14 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
-from app.domain.models import Device, DevicePool, DevicePoolMember, Project, User
+from app.domain.models import Device, RemoteAppiumServer, User
 from app.schemas.schemas import (
     DeviceCreate,
     DeviceListResponse,
-    DevicePoolCreate,
-    DevicePoolListResponse,
-    DevicePoolResponse,
-    DevicePoolUpdate,
     DeviceResponse,
     DeviceUpdate,
 )
@@ -122,8 +118,57 @@ class ParsedElement(BaseModel):
     locators: List[ElementLocator] = []
 
 
-# In-memory storage for remote servers and sessions (in production, use database)
-_remote_servers: dict = {}
+# =============================================================================
+# Session Management Models (基于包和设备创建 Session)
+# =============================================================================
+
+
+class CreateSessionFromPackageRequest(BaseModel):
+    """Request to create Appium session from package and device."""
+    device_udid: str
+    package_id: str
+    server_url: Optional[str] = None  # 可选，默认使用本地 Appium
+    no_reset: bool = True  # 是否保留应用数据
+    full_reset: bool = False  # 是否完全重置应用
+    auto_launch: bool = True  # 是否自动启动应用
+    extra_capabilities: Optional[dict] = None  # 额外的 capabilities
+
+
+class SessionInfo(BaseModel):
+    """Session information response."""
+    session_id: str
+    device_udid: str
+    device_name: Optional[str] = None
+    platform: str
+    platform_version: Optional[str] = None
+    package_id: Optional[str] = None
+    package_name: Optional[str] = None
+    app_name: Optional[str] = None
+    server_url: str
+    status: str  # active, disconnected, error
+    created_at: datetime
+    capabilities: dict
+
+
+class SessionListResponse(BaseModel):
+    """Response for listing sessions."""
+    sessions: List[SessionInfo]
+    count: int
+
+
+class SessionActionRequest(BaseModel):
+    """Request for session actions."""
+    action: str = Field(..., pattern="^(screenshot|source|launch_app|close_app|reset_app)$")
+    app_id: Optional[str] = None  # 用于 launch/close 特定应用
+
+
+class SessionActionResponse(BaseModel):
+    """Response for session actions."""
+    success: bool
+    message: str
+    data: Optional[dict] = None
+
+
 _appium_sessions: dict = {}
 
 
@@ -408,48 +453,66 @@ async def test_remote_connection(
 async def add_remote_server(
     payload: RemoteServerCreate,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Add a remote Appium server configuration.
     """
-    import uuid as uuid_module
-    server_id = uuid_module.uuid4().hex
-    tenant_key = str(current_user.tenant_id)
-    
-    if tenant_key not in _remote_servers:
-        _remote_servers[tenant_key] = {}
-    
-    server = {
-        "id": server_id,
-        "name": payload.name,
-        "host": payload.host,
-        "port": payload.port,
-        "path": payload.path,
-        "username": payload.username,
-        "password": payload.password,
-        "status": "unknown",
-        "last_connected": None,
-        "device_count": 0,
-    }
-    
-    _remote_servers[tenant_key][server_id] = server
-    
-    return RemoteServerResponse(**{k: v for k, v in server.items() if k not in ("username", "password")})
+    server = RemoteAppiumServer(
+        tenant_id=str(current_user.tenant_id),
+        name=payload.name,
+        host=payload.host,
+        port=payload.port,
+        path=payload.path,
+        username=payload.username,
+        password=payload.password,
+        status="unknown",
+        last_connected=None,
+        device_count=0,
+    )
+    db.add(server)
+    await db.commit()
+    await db.refresh(server)
+
+    return RemoteServerResponse(
+        id=server.id,
+        name=server.name,
+        host=server.host,
+        port=server.port,
+        path=server.path,
+        status=server.status,
+        last_connected=server.last_connected,
+        device_count=server.device_count,
+    )
 
 
 @router.get("/devices/remote-servers", response_model=List[RemoteServerResponse])
 async def list_remote_servers(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
 ):
     """
     List all configured remote Appium servers.
     """
-    tenant_key = str(current_user.tenant_id)
-    servers = _remote_servers.get(tenant_key, {})
-    
+    result = await db.execute(
+        select(RemoteAppiumServer).where(
+            RemoteAppiumServer.tenant_id == str(current_user.tenant_id),
+            RemoteAppiumServer.deleted_at.is_(None),
+        )
+    )
+    servers = result.scalars().all()
     return [
-        RemoteServerResponse(**{k: v for k, v in s.items() if k not in ("username", "password")})
-        for s in servers.values()
+        RemoteServerResponse(
+            id=s.id,
+            name=s.name,
+            host=s.host,
+            port=s.port,
+            path=s.path,
+            status=s.status,
+            last_connected=s.last_connected,
+            device_count=s.device_count,
+        )
+        for s in servers
     ]
 
 
@@ -457,26 +520,31 @@ async def list_remote_servers(
 async def delete_remote_server(
     server_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Delete a remote Appium server configuration.
     """
-    tenant_key = str(current_user.tenant_id)
-    servers = _remote_servers.get(tenant_key, {})
-    
-    if server_id not in servers:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Remote server not found",
+    result = await db.execute(
+        select(RemoteAppiumServer).where(
+            RemoteAppiumServer.id == server_id,
+            RemoteAppiumServer.tenant_id == str(current_user.tenant_id),
+            RemoteAppiumServer.deleted_at.is_(None),
         )
-    
-    del _remote_servers[tenant_key][server_id]
+    )
+    server = result.scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remote server not found")
+
+    server.deleted_at = datetime.utcnow()
+    await db.commit()
 
 
 @router.post("/devices/remote-servers/{server_id}/refresh", response_model=ScanLocalDevicesResponse)
 async def refresh_remote_devices(
     server_id: str,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Refresh/scan devices from a remote Appium server.
@@ -484,18 +552,19 @@ async def refresh_remote_devices(
     """
     import aiohttp
     
-    tenant_key = str(current_user.tenant_id)
-    servers = _remote_servers.get(tenant_key, {})
-    
-    if server_id not in servers:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Remote server not found",
+    result = await db.execute(
+        select(RemoteAppiumServer).where(
+            RemoteAppiumServer.id == server_id,
+            RemoteAppiumServer.tenant_id == str(current_user.tenant_id),
+            RemoteAppiumServer.deleted_at.is_(None),
         )
-    
-    server = servers[server_id]
-    base_path = server['path'].rstrip('/') if server['path'] else ""
-    base_url = f"http://{server['host']}:{server['port']}{base_path}"
+    )
+    server = result.scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remote server not found")
+
+    base_path = server.path.rstrip("/") if server.path else ""
+    base_url = f"http://{server.host}:{server.port}{base_path}"
     status_url = f"{base_url}/status"
     sessions_url = f"{base_url}/sessions"
     
@@ -507,7 +576,8 @@ async def refresh_remote_devices(
             # First check server status
             async with session.get(status_url) as response:
                 if response.status != 200:
-                    server["status"] = "error"
+                    server.status = "offline"
+                    await db.commit()
                     return ScanLocalDevicesResponse(
                         devices=[],
                         count=0,
@@ -519,7 +589,8 @@ async def refresh_remote_devices(
                 server_version = status_data.get("value", {}).get("build", {}).get("version", "unknown")
                 
                 if not server_ready:
-                    server["status"] = "not_ready"
+                    server.status = "offline"
+                    await db.commit()
                     return ScanLocalDevicesResponse(
                         devices=[],
                         count=0,
@@ -549,20 +620,22 @@ async def refresh_remote_devices(
                 pass
             
             # Update server status
-            server["status"] = "connected"
-            server["last_connected"] = datetime.utcnow()
-            server["device_count"] = len(discovered_devices)
-            server["server_version"] = server_version
+            server.status = "online"
+            server.last_connected = datetime.utcnow()
+            server.device_count = len(discovered_devices)
+            await db.commit()
             
     except aiohttp.ClientError as e:
-        server["status"] = "error"
+        server.status = "offline"
+        await db.commit()
         return ScanLocalDevicesResponse(
             devices=[],
             count=0,
             message=f"Failed to connect to remote server: {str(e)}",
         )
     except Exception as e:
-        server["status"] = "error"
+        server.status = "offline"
+        await db.commit()
         return ScanLocalDevicesResponse(
             devices=[],
             count=0,
@@ -592,12 +665,21 @@ async def start_appium_session(
     
     url = f"{payload.server_url.rstrip('/')}/session"
     
+    # W3C WebDriver protocol format for Appium 2.x/3.x
+    request_body = {
+        "capabilities": {
+            "alwaysMatch": payload.capabilities,
+            "firstMatch": [{}]
+        }
+    }
+    
     try:
-        timeout = aiohttp.ClientTimeout(total=30)
+        timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json={"capabilities": payload.capabilities}) as response:
+            async with session.post(url, json=request_body) as response:
+                data = await response.json()
+                
                 if response.status == 200:
-                    data = await response.json()
                     session_id = data.get("value", {}).get("sessionId")
                     if session_id:
                         tenant_key = str(current_user.tenant_id)
@@ -612,15 +694,22 @@ async def start_appium_session(
                             session_id=session_id,
                             message="Session started successfully",
                         )
-                error_data = await response.json()
+                
+                # Extract error message
+                error_msg = data.get("value", {}).get("message") or data.get("value", {}).get("error") or "Failed to start session"
                 return StartSessionResponse(
                     success=False,
-                    message=error_data.get("value", {}).get("error", "Failed to start session"),
+                    message=error_msg,
                 )
-    except Exception as e:
+    except aiohttp.ClientError as e:
         return StartSessionResponse(
             success=False,
             message=f"Connection error: {str(e)}",
+        )
+    except Exception as e:
+        return StartSessionResponse(
+            success=False,
+            message=f"Unexpected error: {str(e)}",
         )
 
 
@@ -705,6 +794,426 @@ async def stop_appium_session(
 
 
 # =============================================================================
+# Session Management Endpoints (基于包和设备创建/管理 Session)
+# =============================================================================
+
+
+@router.post("/devices/sessions/create-from-package", response_model=SessionInfo)
+async def create_session_from_package(
+    payload: CreateSessionFromPackageRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    基于包信息和设备创建 Appium Session。
+    自动从包中提取 appPackage/appActivity (Android) 或 bundleId (iOS)。
+    """
+    import aiohttp
+    from app.domain.models import AppPackage
+    from app.core.config import settings
+    
+    def normalize_server_url(url: str) -> str:
+        """确保 server_url 是完整的 HTTP URL 格式"""
+        if not url:
+            return "http://127.0.0.1:4723"
+        url = url.strip()
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = f"http://{url}"
+        return url.rstrip("/")
+    
+    # 1. 获取包信息
+    result = await db.execute(
+        select(AppPackage).where(
+            AppPackage.id == payload.package_id,
+            AppPackage.tenant_id == str(current_user.tenant_id),
+            AppPackage.deleted_at.is_(None),
+        )
+    )
+    package = result.scalar_one_or_none()
+    if not package:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Package not found")
+    
+    # 2. 获取设备信息（如果已注册）
+    device_result = await db.execute(
+        select(Device).where(
+            Device.tenant_id == str(current_user.tenant_id),
+            Device.udid == payload.device_udid,
+            Device.deleted_at.is_(None),
+        )
+    )
+    db_device = device_result.scalar_one_or_none()
+    
+    platform_version = ""
+    device_name = payload.device_udid
+    if db_device:
+        platform_version = db_device.platform_version or ""
+        device_name = db_device.name or db_device.model or payload.device_udid
+    
+    # 3. 构建 capabilities
+    caps = {
+        "platformName": "iOS" if package.platform == "ios" else "Android",
+        "appium:automationName": "UiAutomator2" if package.platform == "android" else "XCUITest",
+        "appium:deviceName": payload.device_udid,
+        "appium:udid": payload.device_udid,
+        "appium:noReset": payload.no_reset,
+        "appium:fullReset": payload.full_reset,
+        "appium:newCommandTimeout": 300,
+    }
+    
+    if platform_version:
+        caps["appium:platformVersion"] = platform_version
+    
+    if package.platform == "android":
+        if package.app_package:
+            caps["appium:appPackage"] = package.app_package
+        elif package.package_name:
+            caps["appium:appPackage"] = package.package_name
+        if package.app_activity:
+            caps["appium:appActivity"] = package.app_activity
+        if package.local_path and payload.auto_launch:
+            caps["appium:app"] = package.local_path
+    else:  # iOS
+        if package.bundle_id:
+            caps["appium:bundleId"] = package.bundle_id
+        elif package.package_name:
+            caps["appium:bundleId"] = package.package_name
+        if package.local_path and payload.auto_launch:
+            caps["appium:app"] = package.local_path
+    
+    # Merge extra capabilities
+    if payload.extra_capabilities:
+        for key, value in payload.extra_capabilities.items():
+            if not key.startswith("appium:") and key not in ("platformName",):
+                key = f"appium:{key}"
+            caps[key] = value
+    
+    # 4. 确定 Appium Server URL (自动添加 http:// 前缀)
+    server_url = normalize_server_url(payload.server_url or getattr(settings, 'appium_server_url', 'http://127.0.0.1:4723'))
+    
+    # 5. 创建 Session
+    session_url = f"{server_url}/session"
+    try:
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            request_body = {
+                "capabilities": {
+                    "alwaysMatch": caps,
+                    "firstMatch": [{}]
+                }
+            }
+            async with client.post(session_url, json=request_body) as response:
+                response_data = await response.json()
+                
+                if response.status != 200:
+                    error_msg = response_data.get("value", {}).get("message", "Failed to create session")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Appium error: {error_msg}"
+                    )
+                
+                session_id = response_data.get("value", {}).get("sessionId")
+                if not session_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Session created but no session ID returned"
+                    )
+    except aiohttp.ClientError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Cannot connect to Appium server at {server_url}: {str(e)}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
+    
+    # 6. 保存 Session 信息
+    tenant_key = str(current_user.tenant_id)
+    if tenant_key not in _appium_sessions:
+        _appium_sessions[tenant_key] = {}
+    
+    session_info_data = {
+        "session_id": session_id,
+        "device_udid": payload.device_udid,
+        "device_name": device_name,
+        "platform": package.platform,
+        "platform_version": platform_version,
+        "package_id": package.id,
+        "package_name": package.package_name,
+        "app_name": package.app_name,
+        "server_url": server_url,
+        "status": "active",
+        "created_at": datetime.utcnow(),
+        "capabilities": caps,
+    }
+    
+    _appium_sessions[tenant_key][session_id] = session_info_data
+    
+    # 7. 更新设备状态为 busy（如果已注册）
+    if db_device:
+        db_device.status = "busy"
+        await db.commit()
+    
+    return SessionInfo(**session_info_data)
+
+
+@router.get("/devices/sessions", response_model=SessionListResponse)
+async def list_active_sessions(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+):
+    """列出当前租户的所有活跃 Appium Sessions。"""
+    tenant_key = str(current_user.tenant_id)
+    sessions = _appium_sessions.get(tenant_key, {})
+    
+    session_list = []
+    for s in sessions.values():
+        # Handle both old format (simple dict) and new format (SessionInfo dict)
+        if "session_id" in s:
+            session_list.append(SessionInfo(**s))
+        else:
+            # Old format compatibility
+            session_list.append(SessionInfo(
+                session_id=s.get("session_id", "unknown"),
+                device_udid=s.get("capabilities", {}).get("appium:udid", "unknown"),
+                platform=s.get("capabilities", {}).get("platformName", "unknown").lower(),
+                server_url=s.get("server_url", ""),
+                status="active",
+                created_at=datetime.utcnow(),
+                capabilities=s.get("capabilities", {}),
+            ))
+    
+    return SessionListResponse(sessions=session_list, count=len(session_list))
+
+
+@router.get("/devices/sessions/{session_id}", response_model=SessionInfo)
+async def get_session_detail(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+):
+    """获取指定 Session 的详细信息。"""
+    tenant_key = str(current_user.tenant_id)
+    sessions = _appium_sessions.get(tenant_key, {})
+    
+    if session_id not in sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+    
+    s = sessions[session_id]
+    if "session_id" in s:
+        return SessionInfo(**s)
+    else:
+        return SessionInfo(
+            session_id=session_id,
+            device_udid=s.get("capabilities", {}).get("appium:udid", "unknown"),
+            platform=s.get("capabilities", {}).get("platformName", "unknown").lower(),
+            server_url=s.get("server_url", ""),
+            status="active",
+            created_at=datetime.utcnow(),
+            capabilities=s.get("capabilities", {}),
+        )
+
+
+@router.post("/devices/sessions/{session_id}/action", response_model=SessionActionResponse)
+async def perform_session_action(
+    session_id: str,
+    payload: SessionActionRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+):
+    """
+    对 Session 执行操作：
+    - screenshot: 截图
+    - source: 获取页面源码
+    - launch_app: 启动应用
+    - close_app: 关闭应用
+    - reset_app: 重置应用
+    """
+    import aiohttp
+    
+    tenant_key = str(current_user.tenant_id)
+    sessions = _appium_sessions.get(tenant_key, {})
+    
+    if session_id not in sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+    
+    session_info = sessions[session_id]
+    server_url = session_info.get("server_url", "")
+    base_url = f"{server_url}/session/{session_id}"
+    
+    # Get platform and package info
+    platform = session_info.get("platform", "android")
+    package_name = session_info.get("package_name") or session_info.get("capabilities", {}).get("appium:appPackage")
+    
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            if payload.action == "screenshot":
+                async with client.get(f"{base_url}/screenshot") as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return SessionActionResponse(
+                            success=True,
+                            message="Screenshot captured",
+                            data={"screenshot": data.get("value")}
+                        )
+                    return SessionActionResponse(success=False, message="Failed to capture screenshot")
+            
+            elif payload.action == "source":
+                async with client.get(f"{base_url}/source") as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return SessionActionResponse(
+                            success=True,
+                            message="Page source retrieved",
+                            data={"source": data.get("value")}
+                        )
+                    return SessionActionResponse(success=False, message="Failed to get page source")
+            
+            elif payload.action == "launch_app":
+                app_id = payload.app_id or package_name
+                if not app_id:
+                    return SessionActionResponse(success=False, message="No app ID specified")
+                
+                key = "bundleId" if platform == "ios" else "appId"
+                async with client.post(f"{base_url}/appium/device/activate_app", json={key: app_id}) as response:
+                    if response.status == 200:
+                        return SessionActionResponse(success=True, message=f"App {app_id} launched")
+                    return SessionActionResponse(success=False, message="Failed to launch app")
+            
+            elif payload.action == "close_app":
+                app_id = payload.app_id or package_name
+                if not app_id:
+                    return SessionActionResponse(success=False, message="No app ID specified")
+                
+                key = "bundleId" if platform == "ios" else "appId"
+                async with client.post(f"{base_url}/appium/device/terminate_app", json={key: app_id}) as response:
+                    if response.status == 200:
+                        return SessionActionResponse(success=True, message=f"App {app_id} closed")
+                    return SessionActionResponse(success=False, message="Failed to close app")
+            
+            elif payload.action == "reset_app":
+                app_id = payload.app_id or package_name
+                if not app_id:
+                    return SessionActionResponse(success=False, message="No app ID specified")
+                
+                key = "bundleId" if platform == "ios" else "appId"
+                await client.post(f"{base_url}/appium/device/terminate_app", json={key: app_id})
+                await client.post(f"{base_url}/appium/device/activate_app", json={key: app_id})
+                return SessionActionResponse(success=True, message=f"App {app_id} reset")
+    
+    except aiohttp.ClientError as e:
+        sessions[session_id]["status"] = "disconnected"
+        return SessionActionResponse(success=False, message=f"Connection error: {str(e)}")
+    except Exception as e:
+        return SessionActionResponse(success=False, message=f"Error: {str(e)}")
+
+
+@router.post("/devices/sessions/{session_id}/refresh", response_model=SessionInfo)
+async def refresh_session_status(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+):
+    """刷新 Session 状态，检查是否仍然活跃。"""
+    import aiohttp
+    
+    tenant_key = str(current_user.tenant_id)
+    sessions = _appium_sessions.get(tenant_key, {})
+    
+    if session_id not in sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+    
+    session_info = sessions[session_id]
+    server_url = session_info.get("server_url", "")
+    
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            async with client.get(f"{server_url}/session/{session_id}") as response:
+                if response.status == 200:
+                    session_info["status"] = "active"
+                else:
+                    session_info["status"] = "disconnected"
+    except Exception:
+        session_info["status"] = "error"
+    
+    sessions[session_id] = session_info
+    
+    if "session_id" in session_info:
+        return SessionInfo(**session_info)
+    else:
+        return SessionInfo(
+            session_id=session_id,
+            device_udid=session_info.get("capabilities", {}).get("appium:udid", "unknown"),
+            platform=session_info.get("capabilities", {}).get("platformName", "unknown").lower(),
+            server_url=server_url,
+            status=session_info.get("status", "unknown"),
+            created_at=datetime.utcnow(),
+            capabilities=session_info.get("capabilities", {}),
+        )
+
+
+@router.delete("/devices/sessions/{session_id}/terminate")
+async def terminate_session_and_release(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """终止 Appium Session 并释放设备。"""
+    import aiohttp
+    
+    tenant_key = str(current_user.tenant_id)
+    sessions = _appium_sessions.get(tenant_key, {})
+    
+    if session_id not in sessions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+    
+    session_info = sessions[session_id]
+    server_url = session_info.get("server_url", "")
+    device_udid = session_info.get("device_udid")
+    
+    # 1. 终止 Appium Session
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            await client.delete(f"{server_url}/session/{session_id}")
+    except Exception:
+        pass
+    
+    # 2. 从内存中删除
+    del _appium_sessions[tenant_key][session_id]
+    
+    # 3. 释放设备（如果已注册）
+    if device_udid:
+        device_result = await db.execute(
+            select(Device).where(
+                Device.tenant_id == str(current_user.tenant_id),
+                Device.udid == device_udid,
+                Device.deleted_at.is_(None),
+            )
+        )
+        db_device = device_result.scalar_one_or_none()
+        if db_device and db_device.status == "busy":
+            db_device.status = "available"
+            db_device.current_run_id = None
+            await db.commit()
+    
+    return {"message": "Session terminated successfully"}
+
+
+# =============================================================================
 # Device Endpoints
 # =============================================================================
 
@@ -717,11 +1226,10 @@ async def list_devices(
     page_size: int = Query(20, ge=1, le=100),
     platform: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
-    pool_id: Optional[UUID] = Query(None),
 ):
     """List all devices for the tenant."""
     base_query = select(Device).where(
-        Device.tenant_id == current_user.tenant_id,
+        Device.tenant_id == str(current_user.tenant_id),
         Device.deleted_at.is_(None),
     )
 
@@ -729,16 +1237,10 @@ async def list_devices(
         base_query = base_query.where(Device.platform == platform)
     if status_filter:
         base_query = base_query.where(Device.status == status_filter)
-    if pool_id:
-        base_query = base_query.join(DevicePoolMember).where(
-            DevicePoolMember.pool_id == pool_id
-        )
 
-    # Count total
     count_query = select(func.count()).select_from(base_query.subquery())
     total = await db.scalar(count_query)
 
-    # Get items
     query = (
         base_query.order_by(Device.created_at.desc())
         .offset((page - 1) * page_size)
@@ -755,21 +1257,16 @@ async def list_devices(
     )
 
 
-@router.post(
-    "/devices",
-    response_model=DeviceResponse,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/devices", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED)
 async def register_device(
     payload: DeviceCreate,
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ):
     """Register a new device."""
-    # Check if device with same UDID already exists
     result = await db.execute(
         select(Device).where(
-            Device.tenant_id == current_user.tenant_id,
+            Device.tenant_id == str(current_user.tenant_id),
             Device.udid == payload.udid,
             Device.deleted_at.is_(None),
         )
@@ -782,7 +1279,7 @@ async def register_device(
         )
 
     device = Device(
-        tenant_id=current_user.tenant_id,
+        tenant_id=str(current_user.tenant_id),
         name=payload.name,
         udid=payload.udid,
         platform=payload.platform,
@@ -794,7 +1291,7 @@ async def register_device(
         tags=payload.tags or [],
     )
     db.add(device)
-    await db.flush()
+    await db.commit()
     await db.refresh(device)
     return DeviceResponse.model_validate(device)
 
@@ -809,17 +1306,14 @@ async def get_device(
     result = await db.execute(
         select(Device).where(
             Device.id == str(device_id),
-            Device.tenant_id == current_user.tenant_id,
+            Device.tenant_id == str(current_user.tenant_id),
             Device.deleted_at.is_(None),
         )
     )
     device = result.scalar_one_or_none()
 
     if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
 
     return DeviceResponse.model_validate(device)
 
@@ -835,23 +1329,20 @@ async def update_device(
     result = await db.execute(
         select(Device).where(
             Device.id == str(device_id),
-            Device.tenant_id == current_user.tenant_id,
+            Device.tenant_id == str(current_user.tenant_id),
             Device.deleted_at.is_(None),
         )
     )
     device = result.scalar_one_or_none()
 
     if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
 
     update_data = payload.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(device, field, value)
 
-    await db.flush()
+    await db.commit()
     await db.refresh(device)
     return DeviceResponse.model_validate(device)
 
@@ -866,471 +1357,14 @@ async def delete_device(
     result = await db.execute(
         select(Device).where(
             Device.id == str(device_id),
-            Device.tenant_id == current_user.tenant_id,
+            Device.tenant_id == str(current_user.tenant_id),
             Device.deleted_at.is_(None),
         )
     )
     device = result.scalar_one_or_none()
 
     if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
 
     device.deleted_at = datetime.utcnow()
-    await db.flush()
-
-
-@router.post("/devices/{device_id}/heartbeat", response_model=DeviceResponse)
-async def device_heartbeat(
-    device_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Update device heartbeat timestamp."""
-    result = await db.execute(
-        select(Device).where(
-            Device.id == str(device_id),
-            Device.tenant_id == current_user.tenant_id,
-            Device.deleted_at.is_(None),
-        )
-    )
-    device = result.scalar_one_or_none()
-
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
-
-    device.last_heartbeat = datetime.utcnow()
-    if device.status == "offline":
-        device.status = "available"
-
-    await db.flush()
-    await db.refresh(device)
-    return DeviceResponse.model_validate(device)
-
-
-@router.post("/devices/{device_id}/reserve", response_model=DeviceResponse)
-async def reserve_device(
-    device_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Reserve a device for testing."""
-    result = await db.execute(
-        select(Device).where(
-            Device.id == str(device_id),
-            Device.tenant_id == current_user.tenant_id,
-            Device.deleted_at.is_(None),
-        )
-    )
-    device = result.scalar_one_or_none()
-
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
-
-    if device.status != "available":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Device is not available (current status: {device.status})",
-        )
-
-    device.status = "busy"
-    device.current_run_id = None  # Will be set when run starts
-    await db.flush()
-    await db.refresh(device)
-    return DeviceResponse.model_validate(device)
-
-
-@router.post("/devices/{device_id}/release", response_model=DeviceResponse)
-async def release_device(
-    device_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Release a device after testing."""
-    result = await db.execute(
-        select(Device).where(
-            Device.id == str(device_id),
-            Device.tenant_id == current_user.tenant_id,
-            Device.deleted_at.is_(None),
-        )
-    )
-    device = result.scalar_one_or_none()
-
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
-
-    device.status = "available"
-    device.current_run_id = None
-    await db.flush()
-    await db.refresh(device)
-    return DeviceResponse.model_validate(device)
-
-
-# =============================================================================
-# Device Pool Endpoints
-# =============================================================================
-
-
-@router.get("/device-pools", response_model=DevicePoolListResponse)
-async def list_device_pools(
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-):
-    """List all device pools for the tenant."""
-    base_query = select(DevicePool).where(
-        DevicePool.tenant_id == current_user.tenant_id,
-        DevicePool.deleted_at.is_(None),
-    )
-
-    # Count total
-    count_query = select(func.count()).select_from(base_query.subquery())
-    total = await db.scalar(count_query)
-
-    # Get items
-    query = (
-        base_query.order_by(DevicePool.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-    result = await db.execute(query)
-    pools = result.scalars().all()
-
-    return DevicePoolListResponse(
-        items=[DevicePoolResponse.model_validate(p) for p in pools],
-        total=total or 0,
-        page=page,
-        page_size=page_size,
-    )
-
-
-@router.post(
-    "/device-pools",
-    response_model=DevicePoolResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_device_pool(
-    payload: DevicePoolCreate,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a new device pool."""
-    pool = DevicePool(
-        tenant_id=current_user.tenant_id,
-        name=payload.name,
-        description=payload.description,
-        selection_strategy=payload.selection_strategy or "round_robin",
-        platform_filter=payload.platform_filter,
-        tag_filter=payload.tag_filter or [],
-    )
-    db.add(pool)
-    await db.flush()
-    await db.refresh(pool)
-    return DevicePoolResponse.model_validate(pool)
-
-
-@router.get("/device-pools/{pool_id}", response_model=DevicePoolResponse)
-async def get_device_pool(
-    pool_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Get a device pool by ID."""
-    result = await db.execute(
-        select(DevicePool).where(
-            DevicePool.id == str(pool_id),
-            DevicePool.tenant_id == current_user.tenant_id,
-            DevicePool.deleted_at.is_(None),
-        )
-    )
-    pool = result.scalar_one_or_none()
-
-    if not pool:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device pool not found",
-        )
-
-    return DevicePoolResponse.model_validate(pool)
-
-
-@router.patch("/device-pools/{pool_id}", response_model=DevicePoolResponse)
-async def update_device_pool(
-    pool_id: UUID,
-    payload: DevicePoolUpdate,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Update a device pool."""
-    result = await db.execute(
-        select(DevicePool).where(
-            DevicePool.id == str(pool_id),
-            DevicePool.tenant_id == current_user.tenant_id,
-            DevicePool.deleted_at.is_(None),
-        )
-    )
-    pool = result.scalar_one_or_none()
-
-    if not pool:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device pool not found",
-        )
-
-    update_data = payload.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(pool, field, value)
-
-    await db.flush()
-    await db.refresh(pool)
-    return DevicePoolResponse.model_validate(pool)
-
-
-@router.delete("/device-pools/{pool_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_device_pool(
-    pool_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Soft delete a device pool."""
-    result = await db.execute(
-        select(DevicePool).where(
-            DevicePool.id == str(pool_id),
-            DevicePool.tenant_id == current_user.tenant_id,
-            DevicePool.deleted_at.is_(None),
-        )
-    )
-    pool = result.scalar_one_or_none()
-
-    if not pool:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device pool not found",
-        )
-
-    pool.deleted_at = datetime.utcnow()
-    await db.flush()
-
-
-@router.post(
-    "/device-pools/{pool_id}/devices/{device_id}",
-    status_code=status.HTTP_201_CREATED,
-)
-async def add_device_to_pool(
-    pool_id: UUID,
-    device_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Add a device to a pool."""
-    # Verify pool exists
-    result = await db.execute(
-        select(DevicePool).where(
-            DevicePool.id == str(pool_id),
-            DevicePool.tenant_id == current_user.tenant_id,
-            DevicePool.deleted_at.is_(None),
-        )
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device pool not found",
-        )
-
-    # Verify device exists
-    result = await db.execute(
-        select(Device).where(
-            Device.id == str(device_id),
-            Device.tenant_id == current_user.tenant_id,
-            Device.deleted_at.is_(None),
-        )
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
-
-    # Check if already in pool
-    result = await db.execute(
-        select(DevicePoolMember).where(
-            DevicePoolMember.pool_id == pool_id,
-            DevicePoolMember.device_id == device_id,
-        )
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Device already in pool",
-        )
-
-    # Add to pool
-    member = DevicePoolMember(
-        pool_id=pool_id,
-        device_id=device_id,
-        priority=0,
-    )
-    db.add(member)
-    await db.flush()
-
-    return {"message": "Device added to pool"}
-
-
-@router.delete(
-    "/device-pools/{pool_id}/devices/{device_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def remove_device_from_pool(
-    pool_id: UUID,
-    device_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Remove a device from a pool."""
-    result = await db.execute(
-        select(DevicePoolMember).where(
-            DevicePoolMember.pool_id == pool_id,
-            DevicePoolMember.device_id == device_id,
-        )
-    )
-    member = result.scalar_one_or_none()
-
-    if not member:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not in pool",
-        )
-
-    await db.delete(member)
-    await db.flush()
-
-
-@router.get("/device-pools/{pool_id}/devices", response_model=DeviceListResponse)
-async def list_pool_devices(
-    pool_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-):
-    """List all devices in a pool."""
-    # Verify pool exists
-    result = await db.execute(
-        select(DevicePool).where(
-            DevicePool.id == str(pool_id),
-            DevicePool.tenant_id == current_user.tenant_id,
-            DevicePool.deleted_at.is_(None),
-        )
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device pool not found",
-        )
-
-    base_query = (
-        select(Device)
-        .join(DevicePoolMember)
-        .where(
-            DevicePoolMember.pool_id == pool_id,
-            Device.deleted_at.is_(None),
-        )
-    )
-
-    # Count total
-    count_query = select(func.count()).select_from(base_query.subquery())
-    total = await db.scalar(count_query)
-
-    # Get items
-    query = (
-        base_query.order_by(DevicePoolMember.priority.desc(), Device.name)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-    result = await db.execute(query)
-    devices = result.scalars().all()
-
-    return DeviceListResponse(
-        items=[DeviceResponse.model_validate(d) for d in devices],
-        total=total or 0,
-        page=page,
-        page_size=page_size,
-    )
-
-
-@router.post("/device-pools/{pool_id}/acquire", response_model=DeviceResponse)
-async def acquire_device_from_pool(
-    pool_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-    platform: Optional[str] = Query(None),
-):
-    """Acquire an available device from the pool."""
-    # Verify pool exists
-    result = await db.execute(
-        select(DevicePool).where(
-            DevicePool.id == str(pool_id),
-            DevicePool.tenant_id == current_user.tenant_id,
-            DevicePool.deleted_at.is_(None),
-        )
-    )
-    pool = result.scalar_one_or_none()
-    if not pool:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device pool not found",
-        )
-
-    # Find available device
-    query = (
-        select(Device)
-        .join(DevicePoolMember)
-        .where(
-            DevicePoolMember.pool_id == pool_id,
-            Device.status == "available",
-            Device.deleted_at.is_(None),
-        )
-    )
-
-    # Apply platform filter
-    if platform:
-        query = query.where(Device.platform == platform)
-    elif pool.platform_filter:
-        query = query.where(Device.platform == pool.platform_filter)
-
-    # Order by selection strategy
-    if pool.selection_strategy == "priority":
-        query = query.order_by(DevicePoolMember.priority.desc())
-    elif pool.selection_strategy == "least_used":
-        query = query.order_by(Device.last_heartbeat.asc().nullsfirst())
-    else:  # round_robin - just get first available
-        query = query.order_by(Device.last_heartbeat.desc().nullslast())
-
-    query = query.limit(1)
-    result = await db.execute(query)
-    device = result.scalar_one_or_none()
-
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No available devices in pool",
-        )
-
-    # Reserve the device
-    device.status = "busy"
-    await db.flush()
-    await db.refresh(device)
-
-    return DeviceResponse.model_validate(device)
+    await db.commit()

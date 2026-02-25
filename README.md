@@ -19,7 +19,7 @@ An enterprise-grade mobile automation testing platform with AI-powered analysis,
 - Docker & Docker Compose
 - PostgreSQL 15+
 - Redis 7+
-- MinIO (or S3-compatible storage)
+- Aliyun OSS (object storage)
 
 ## 🛠️ Quick Start
 
@@ -33,7 +33,7 @@ cd nanotest
 ### 2. Start Infrastructure with Docker Compose
 
 ```bash
-docker-compose up -d postgres redis minio
+docker-compose up -d postgres redis
 ```
 
 ### 3. Backend Setup
@@ -94,7 +94,6 @@ This starts all services:
 - Frontend: http://localhost:3000
 - PostgreSQL: localhost:5432
 - Redis: localhost:6379
-- MinIO Console: http://localhost:9001
 
 ## 📖 API Documentation
 
@@ -119,7 +118,7 @@ Once the backend is running, access the API docs at:
         ┌─────────────────────┼─────────────────────┐
         ▼                     ▼                     ▼
 ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│  PostgreSQL   │    │     Redis     │    │     MinIO     │
+│  PostgreSQL   │    │     Redis     │    │  Aliyun OSS   │
 │   (Data)      │    │ (Cache/Queue) │    │  (Storage)    │
 └───────────────┘    └───────────────┘    └───────────────┘
                               │
@@ -173,7 +172,7 @@ Key environment variables:
 | `REDIS_URL` | Redis connection string | - |
 | `SECRET_KEY` | JWT signing key | - |
 | `OPENAI_API_KEY` | OpenAI API key for AI analysis | - |
-| `MINIO_ENDPOINT` | MinIO/S3 endpoint | localhost:9000 |
+| `OSS_STS_TOKEN_URL` | Aliyun OSS STS token endpoint | - |
 | `APPIUM_SERVER_URL` | Appium server URL | http://localhost:4723 |
 
 ## 📝 Test Case DSL Example

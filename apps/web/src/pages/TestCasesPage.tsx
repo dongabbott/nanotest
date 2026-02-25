@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, FileCode, Tag, X, Edit, Trash2, Eye, Code, Copy, Check } from 'lucide-react';
+import { Plus, FileCode, Tag, X, Edit, Trash2, Eye, Code, Copy, Check, PanelRightOpen, PanelRightClose } from 'lucide-react';
 import { testCasesApi } from '../services/api';
 import TestCaseStepDesigner, { TestCaseDsl } from '../components/TestCaseStepDesigner';
+import ElementInspector, { Selector } from '../components/ElementInspector';
 
 // 创建/编辑测试用例弹窗
 function TestCaseEditorModal({
@@ -21,37 +22,52 @@ function TestCaseEditorModal({
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [newTag, setNewTag] = useState('');
+  const [showInspector, setShowInspector] = useState(false);
+  const [pendingSelector, setPendingSelector] = useState<Selector | null>(null);
   
-  const [dsl, setDsl] = useState<TestCaseDsl>(() => {
+  const [dsl, setDsl] = useState<TestCaseDsl>({
+    name: '',
+    description: '',
+    tags: [],
+    steps: [],
+    variables: {},
+  });
+
+  const [codeContent, setCodeContent] = useState('{\n  "name": "",\n  "steps": []\n}');
+
+  // 当 editCase 变化时，更新表单数据
+  useEffect(() => {
     if (editCase?.dsl_content) {
-      return {
+      setDsl({
         name: editCase.name || '',
         description: editCase.dsl_content.description || '',
         tags: editCase.tags || [],
-        steps: editCase.dsl_content.steps || [],
+        steps: (editCase.dsl_content.steps || []).map((s: any, i: number) => ({
+          ...s,
+          id: s.id || `step_${i}_${Date.now()}`,
+        })),
         variables: editCase.dsl_content.variables || {},
-      };
+      });
+      setCodeContent(JSON.stringify(editCase.dsl_content, null, 2));
+    } else {
+      // 新建时重置表单
+      setDsl({
+        name: '',
+        description: '',
+        tags: [],
+        steps: [],
+        variables: {},
+      });
+      setCodeContent('{\n  "name": "",\n  "steps": []\n}');
     }
-    return {
-      name: '',
-      description: '',
-      tags: [],
-      steps: [],
-      variables: {},
-    };
-  });
-
-  const [codeContent, setCodeContent] = useState(() => {
-    if (editCase?.dsl_content) {
-      return JSON.stringify(editCase.dsl_content, null, 2);
-    }
-    return '{\n  "name": "",\n  "steps": []\n}';
-  });
+    setError('');
+    setActiveTab('visual');
+  }, [editCase]);
 
   const queryClient = useQueryClient();
 
   const saveMutation = useMutation({
-    mutationFn: (data: { name: string; dsl_content: object; tags?: string[] }) => {
+    mutationFn: (data: { name: string; description?: string; dsl_content: any; tags?: string[] }) => {
       if (editCase) {
         return testCasesApi.update(editCase.id, data);
       }
@@ -111,6 +127,7 @@ function TestCaseEditorModal({
 
     saveMutation.mutate({
       name: finalName,
+      description: finalDsl?.description,
       dsl_content: finalDsl,
       tags: finalTags.length > 0 ? finalTags : undefined,
     });
@@ -173,11 +190,20 @@ function TestCaseEditorModal({
     setDsl({ ...dsl, tags: dsl.tags?.filter((_, i) => i !== index) });
   };
 
+  // 处理从元素检查器选择的定位器
+  const handleSelectElement = (selector: Selector) => {
+    setPendingSelector(selector);
+    // 提示用户已选择元素
+    setTimeout(() => setPendingSelector(null), 3000);
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+      <div className={`bg-white rounded-xl shadow-xl overflow-hidden flex flex-col transition-all duration-300 ${
+        showInspector ? 'w-[95vw] h-[95vh] max-w-none' : 'w-full max-w-4xl max-h-[90vh]'
+      }`}>
         {/* 头部 */}
         <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
           <div>
@@ -187,6 +213,22 @@ function TestCaseEditorModal({
             <p className="text-sm text-gray-500">使用可视化设计器或直接编写 DSL 代码</p>
           </div>
           <div className="flex items-center gap-3">
+            {/* 元素检查器开关 */}
+            {activeTab === 'visual' && (
+              <button
+                type="button"
+                onClick={() => setShowInspector(!showInspector)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                  showInspector 
+                    ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+                title={showInspector ? '关闭元素检查器' : '打开元素检查器'}
+              >
+                {showInspector ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                <span className="hidden sm:inline">元素检查器</span>
+              </button>
+            )}
             {/* 模式切换 */}
             <div className="flex bg-gray-200 rounded-lg p-0.5">
               <button
@@ -234,100 +276,135 @@ function TestCaseEditorModal({
           </div>
         )}
 
+        {/* 待应用的选择器提示 */}
+        {pendingSelector && (
+          <div className="mx-6 mt-4 bg-green-50 border border-green-200 px-4 py-3 rounded-lg text-sm flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-green-700">已选择元素:</span>
+              <code className="bg-green-100 px-2 py-0.5 rounded text-green-800 font-mono text-xs">
+                {pendingSelector.strategy}: {pendingSelector.value}
+              </code>
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(pendingSelector.value);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
+              className="text-green-600 hover:text-green-800 text-sm underline"
+            >
+              复制定位值
+            </button>
+          </div>
+        )}
+
         {/* 内容区域 */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-hidden flex flex-col">
-          <div className="flex-1 overflow-auto p-6">
-            {activeTab === 'visual' ? (
-              <div className="space-y-6">
-                {/* 基本信息 */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      用例名称 <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={dsl.name}
-                      onChange={(e) => setDsl({ ...dsl, name: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="例如：用户登录流程"
-                    />
+          <div className="flex-1 overflow-hidden flex">
+            {/* 左侧编辑区 */}
+            <div className={`flex-1 overflow-auto p-6 ${showInspector && activeTab === 'visual' ? 'border-r border-gray-200' : ''}`}>
+              {activeTab === 'visual' ? (
+                <div className="space-y-6">
+                  {/* 基本信息 */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        用例名称 <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={dsl.name}
+                        onChange={(e) => setDsl({ ...dsl, name: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="例如：用户登录流程"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
+                      <input
+                        type="text"
+                        value={dsl.description || ''}
+                        onChange={(e) => setDsl({ ...dsl, description: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="简要描述测试用例的目的"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
-                    <input
-                      type="text"
-                      value={dsl.description || ''}
-                      onChange={(e) => setDsl({ ...dsl, description: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="简要描述测试用例的目的"
-                    />
-                  </div>
-                </div>
 
-                {/* 标签 */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">标签</label>
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {dsl.tags?.map((tag, i) => (
-                      <span 
-                        key={i} 
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full text-sm"
-                      >
-                        <Tag size={12} />
-                        {tag}
-                        <button
-                          type="button"
-                          onClick={() => removeTag(i)}
-                          className="ml-1 hover:text-blue-900"
+                  {/* 标签 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">标签</label>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {dsl.tags?.map((tag, i) => (
+                        <span 
+                          key={i} 
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full text-sm"
                         >
-                          ×
-                        </button>
-                      </span>
-                    ))}
+                          <Tag size={12} />
+                          {tag}
+                          <button
+                            type="button"
+                            onClick={() => removeTag(i)}
+                            className="ml-1 hover:text-blue-900"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+                        className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                        placeholder="输入标签后按回车添加"
+                      />
+                      <button 
+                        type="button"
+                        onClick={addTag} 
+                        className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200"
+                      >
+                        添加
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={newTag}
-                      onChange={(e) => setNewTag(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
-                      className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                      placeholder="输入标签后按回车添加"
-                    />
-                    <button 
-                      type="button"
-                      onClick={addTag} 
-                      className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200"
-                    >
-                      添加
-                    </button>
-                  </div>
-                </div>
 
-                {/* 步骤设计器 */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    测试步骤 <span className="text-red-500">*</span>
-                  </label>
-                  <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 min-h-[300px]">
-                    <TestCaseStepDesigner
-                      dsl={dsl}
-                      onChange={setDsl}
-                    />
+                  {/* 步骤设计器 */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      测试步骤 <span className="text-red-500">*</span>
+                    </label>
+                    <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 min-h-[300px]">
+                      <TestCaseStepDesigner
+                        dsl={dsl}
+                        onChange={setDsl}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : (
-              <div className="h-full">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  DSL 代码 (JSON)
-                </label>
-                <textarea
-                  value={codeContent}
-                  onChange={(e) => setCodeContent(e.target.value)}
-                  className="w-full h-[400px] px-4 py-3 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-900 text-gray-100"
-                  spellCheck={false}
+              ) : (
+                <div className="h-full">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    DSL 代码 (JSON)
+                  </label>
+                  <textarea
+                    value={codeContent}
+                    onChange={(e) => setCodeContent(e.target.value)}
+                    className="w-full h-[400px] px-4 py-3 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-900 text-gray-100"
+                    spellCheck={false}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* 右侧元素检查器 */}
+            {showInspector && activeTab === 'visual' && (
+              <div className="w-[55%] flex-shrink-0 overflow-hidden">
+                <ElementInspector
+                  onSelectElement={handleSelectElement}
+                  className="h-full rounded-none border-0"
                 />
               </div>
             )}
@@ -373,6 +450,7 @@ export default function TestCasesPage() {
     queryKey: ['testCases', projectId],
     queryFn: () => testCasesApi.list(projectId!, 1, 50),
     enabled: !!projectId,
+    refetchOnMount: 'always',
   });
 
   const deleteMutation = useMutation({

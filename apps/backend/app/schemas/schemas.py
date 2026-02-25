@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 # =============================================================================
@@ -148,11 +148,20 @@ class ProjectListResponse(BaseModel):
 
 class TestStepSchema(BaseModel):
     """Test step in DSL."""
+    model_config = ConfigDict(extra="allow")
+
     action: str
     target: Optional[str] = None
     value: Optional[str] = None
     params: Optional[dict[str, Any]] = None
     timeout: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_action(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "action" not in data and "type" in data:
+            return {**data, "action": data["type"]}
+        return data
 
 
 class TestCaseDSL(BaseModel):
@@ -363,48 +372,6 @@ class DeviceResponse(DeviceBase, TimestampSchema):
 class DeviceListResponse(BaseModel):
     """Device list response schema."""
     items: list[DeviceResponse]
-    total: int
-    page: int
-    page_size: int
-
-
-class DevicePoolBase(BaseModel):
-    """Base device pool schema."""
-    name: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
-    selection_strategy: str = Field(
-        default="round_robin",
-        pattern="^(round_robin|priority|least_used)$"
-    )
-    platform_filter: Optional[str] = Field(None, pattern="^(ios|android)$")
-    tag_filter: list[str] = Field(default_factory=list)
-
-
-class DevicePoolCreate(DevicePoolBase):
-    """Device pool creation schema."""
-    pass
-
-
-class DevicePoolUpdate(BaseModel):
-    """Device pool update schema."""
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    selection_strategy: Optional[str] = Field(
-        None, pattern="^(round_robin|priority|least_used)$"
-    )
-    platform_filter: Optional[str] = Field(None, pattern="^(ios|android)$")
-    tag_filter: Optional[list[str]] = None
-
-
-class DevicePoolResponse(DevicePoolBase, TimestampSchema):
-    """Device pool response schema."""
-    id: UUID
-    tenant_id: UUID
-
-
-class DevicePoolListResponse(BaseModel):
-    """Device pool list response schema."""
-    items: list[DevicePoolResponse]
     total: int
     page: int
     page_size: int
@@ -638,36 +605,6 @@ class RiskScoreResponse(BaseModel):
     risk_score: float
     signals: list[dict[str, Any]]
     recommendation: str
-
-
-# =============================================================================
-# Asset Schemas
-# =============================================================================
-
-class PresignUploadRequest(BaseModel):
-    """Presign upload request."""
-    filename: str
-    content_type: str
-    bucket: str = Field(default="screenshots", pattern="^(screenshots|reports|logs)$")
-
-
-class PresignUploadResponse(BaseModel):
-    """Presign upload response."""
-    upload_url: str
-    object_key: str
-    expires_in: int
-
-
-class PresignDownloadRequest(BaseModel):
-    """Presign download request."""
-    object_key: str
-    bucket: str = Field(default="screenshots", pattern="^(screenshots|reports|logs)$")
-
-
-class PresignDownloadResponse(BaseModel):
-    """Presign download response."""
-    download_url: str
-    expires_in: int
 
 
 # =============================================================================

@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Smartphone,
   Wifi,
   RefreshCw,
   Plus,
@@ -12,422 +11,26 @@ import {
   Server,
   Usb,
   Globe,
-  AlertTriangle,
   Zap,
-  ExternalLink,
   Copy,
   Check,
   X,
   Apple,
   Bot,
-  Monitor,
-  Edit,
-  MoreHorizontal,
+  Play,
 } from 'lucide-react';
 import { devicesApi, packagesApi } from '../services/api';
+import {
+  LocalDeviceList,
+  SessionList,
+  SessionActionResultModal,
+  CreateSessionModal,
+} from '../components/devices';
+import type { LocalDevice, RemoteServer, SessionInfo } from '../components/devices/types';
 
-interface LocalDevice {
-  id: string;
-  udid: string;
-  name: string;
-  platform: 'android' | 'ios';
-  version: string;
-  status: 'connected' | 'disconnected' | 'busy';
-  connection: 'usb' | 'wifi';
-  model?: string;
-  manufacturer?: string;
-}
-
-interface RemoteServer {
-  id: string;
-  name: string;
-  host: string;
-  port: number;
-  path?: string;
-  status: 'online' | 'offline' | 'unknown';
-  last_connected?: string;
-  device_count?: number;
-}
-
-interface ConnectionTestResult {
-  success: boolean;
-  message: string;
-  serverInfo?: {
-    version: string;
-    buildTime: string;
-  };
-  devices?: LocalDevice[];
-}
-
-interface AppPackageOption {
-  id: string;
-  filename: string;
-  platform: 'android' | 'ios';
-  package_name: string;
-  app_name?: string;
-  version_name: string;
-  version_code?: number;
-  build_number?: string;
-}
-
-function DevicePoolSettingsModal({
-  isOpen,
-  onClose,
-  pool,
-  onSave,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  pool: any;
-  onSave: (data: any) => void;
-}) {
-  const [name, setName] = useState(pool?.name || '');
-  const [description, setDescription] = useState(pool?.description || '');
-
-  if (!isOpen || !pool) return null;
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSave({ name, description });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
-        <div className="flex items-center justify-between px-6 py-4 border-b">
-          <h2 className="text-lg font-semibold text-gray-900">编辑设备池</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <X size={20} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">设备池名称</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">描述</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              placeholder="设备池描述"
-            />
-          </div>
-
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              保存
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function DeleteConfirmModal({
-  isOpen,
-  onClose,
-  onConfirm,
-  title,
-  message,
-  isLoading,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  title: string;
-  message: string;
-  isLoading?: boolean;
-}) {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4">
-        <div className="p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
-              <AlertTriangle size={20} className="text-red-600" />
-            </div>
-            <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
-          </div>
-          <p className="text-gray-600 mb-6">{message}</p>
-          <div className="flex gap-3">
-            <button
-              onClick={onClose}
-              disabled={isLoading}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-            >
-              取消
-            </button>
-            <button
-              onClick={onConfirm}
-              disabled={isLoading}
-              className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {isLoading && <Loader2 size={16} className="animate-spin" />}
-              确认删除
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CreateDevicePoolModal({
-  isOpen,
-  onClose,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-}) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [error, setError] = useState('');
-
-  const queryClient = useQueryClient();
-
-  const createMutation = useMutation({
-    mutationFn: (data: { name: string; description?: string }) =>
-      devicesApi.createPool('', data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['devicePools'] });
-      onClose();
-      resetForm();
-    },
-    onError: (err: any) => {
-      setError(err.response?.data?.detail || '创建设备池失败');
-    },
-  });
-
-  const resetForm = () => {
-    setName('');
-    setDescription('');
-    setError('');
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) {
-      setError('请输入设备池名称');
-      return;
-    }
-    createMutation.mutate({ 
-      name: name.trim(), 
-      description: description.trim() || undefined 
-    });
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
-        <div className="flex items-center justify-between px-6 py-4 border-b">
-          <h2 className="text-lg font-semibold text-gray-900">创建设备池</h2>
-          <button onClick={() => { onClose(); resetForm(); }} className="text-gray-400 hover:text-gray-600">
-            <X size={20} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && (
-            <div className="bg-red-50 text-red-600 px-4 py-3 rounded-lg text-sm">{error}</div>
-          )}
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              设备池名称 <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Android真机池"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              描述
-            </label>
-            <input
-              type="text"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="用于执行Android测试的设备池"
-            />
-          </div>
-
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={() => { onClose(); resetForm(); }}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              disabled={createMutation.isPending}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {createMutation.isPending && <Loader2 size={16} className="animate-spin" />}
-              {createMutation.isPending ? '创建中...' : '创建设备池'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function DevicePoolCard({
-  pool,
-  devices,
-  onEdit,
-  onDelete,
-  onRefresh,
-}: {
-  pool: any;
-  devices: any[];
-  onEdit: () => void;
-  onDelete: () => void;
-  onRefresh: () => void;
-}) {
-  const [showMenu, setShowMenu] = useState(false);
-  const poolDevices = devices.filter((d: any) => d.pool_id === pool.id);
-  const availableCount = poolDevices.filter((d: any) => d.status === 'available').length;
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
-      <div className="px-6 py-4 border-b border-gray-100">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-              <Monitor size={20} className="text-blue-600" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900">{pool.name}</h3>
-              <p className="text-sm text-gray-500">{pool.description || '暂无描述'}</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
-              availableCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-            }`}>
-              {availableCount} 可用 / {poolDevices.length} 总计
-            </span>
-            
-            <div className="relative">
-              <button
-                onClick={() => setShowMenu(!showMenu)}
-                className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600"
-              >
-                <MoreHorizontal size={18} />
-              </button>
-              
-              {showMenu && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
-                  <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 w-40">
-                    <button
-                      onClick={() => { onRefresh(); setShowMenu(false); }}
-                      className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-                    >
-                      <RefreshCw size={14} />
-                      刷新设备
-                    </button>
-                    <button
-                      onClick={() => { onEdit(); setShowMenu(false); }}
-                      className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-                    >
-                      <Edit size={14} />
-                      编辑设置
-                    </button>
-                    <hr className="my-1" />
-                    <button
-                      onClick={() => { onDelete(); setShowMenu(false); }}
-                      className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2"
-                    >
-                      <Trash2 size={14} />
-                      删除设备池
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {poolDevices.length > 0 ? (
-        <div className="divide-y divide-gray-100">
-          {poolDevices.slice(0, 5).map((device: any) => (
-            <div key={device.id} className="px-6 py-3 flex items-center justify-between hover:bg-gray-50">
-              <div className="flex items-center gap-3">
-                <div className={`w-2 h-2 rounded-full ${
-                  device.status === 'available' ? 'bg-green-500' :
-                  device.status === 'busy' ? 'bg-blue-500' : 'bg-gray-400'
-                }`} />
-                <Smartphone size={16} className="text-gray-400" />
-                <div>
-                  <p className="text-sm font-medium text-gray-900">
-                    {device.name || device.model || '未命名设备'}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {device.platform} {device.platform_version}
-                  </p>
-                </div>
-              </div>
-              <span className={`px-2 py-0.5 text-xs font-medium rounded ${
-                device.status === 'available' ? 'bg-green-100 text-green-700' :
-                device.status === 'busy' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
-              }`}>
-                {device.status === 'available' ? '空闲' : device.status === 'busy' ? '使用中' : '离线'}
-              </span>
-            </div>
-          ))}
-          {poolDevices.length > 5 && (
-            <div className="px-6 py-2 text-center text-sm text-gray-500">
-              还有 {poolDevices.length - 5} 台设备...
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="px-6 py-8 text-center text-gray-500">
-          <Smartphone size={32} className="mx-auto mb-2 text-gray-300" />
-          <p className="text-sm">此设备池暂无设备</p>
-        </div>
-      )}
-    </div>
-  );
-}
+// ============================================================================
+// 辅助组件
+// ============================================================================
 
 function DeviceCard({ 
   device, 
@@ -499,7 +102,7 @@ function DeviceCard({
               <button
                 onClick={() => onInstall(device)}
                 disabled={device.status !== 'connected'}
-                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 disabled:hover:bg-blue-50"
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50"
                 title={device.status === 'connected' ? '安装应用' : '设备未连接'}
               >
                 <Plus size={14} />
@@ -531,7 +134,7 @@ function InstallAppModal({
     enabled: isOpen && !!device,
   });
 
-  const packages: AppPackageOption[] = data?.data?.items || [];
+  const packages = data?.data?.items || [];
 
   useEffect(() => {
     if (!isOpen) return;
@@ -597,9 +200,9 @@ function InstallAppModal({
                 {packages.length === 0 ? (
                   <option value="">暂无可用安装包</option>
                 ) : (
-                  packages.map((p) => (
+                  packages.map((p: any) => (
                     <option key={p.id} value={p.id}>
-                      {(p.app_name || p.package_name) + ' · ' + p.version_name + ' · ' + p.filename}
+                      {(p.app_name || p.package_name) + ' · ' + p.version_name}
                     </option>
                   ))
                 )}
@@ -692,15 +295,7 @@ function RemoteServerCard({
           </div>
           
           {server.device_count !== undefined && server.status === 'online' && (
-            <div className="mt-1 text-sm text-gray-500">
-              {server.device_count} 台设备可用
-            </div>
-          )}
-          
-          {server.last_connected && (
-            <div className="mt-1 text-xs text-gray-400">
-              上次连接: {new Date(server.last_connected).toLocaleString('zh-CN')}
-            </div>
+            <div className="mt-1 text-sm text-gray-500">{server.device_count} 台设备可用</div>
           )}
         </div>
 
@@ -748,27 +343,20 @@ function AddRemoteServerModal({
     host: '',
     port: 4723,
     path: '',
-    username: '',
-    password: '',
   });
-  const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
 
   const handleTest = async () => {
     setIsTesting(true);
     setTestResult(null);
     try {
-      const response = await devicesApi.testRemoteConnection({
+      await devicesApi.testRemoteConnection({
         host: formData.host,
         port: formData.port,
         path: formData.path,
       });
-      setTestResult({
-        success: true,
-        message: '连接成功',
-        serverInfo: response.data?.serverInfo,
-        devices: response.data?.devices,
-      });
+      setTestResult({ success: true, message: '连接成功' });
     } catch (error: any) {
       setTestResult({
         success: false,
@@ -785,14 +373,7 @@ function AddRemoteServerModal({
   };
 
   const resetForm = () => {
-    setFormData({
-      name: '',
-      host: '',
-      port: 4723,
-      path: '',
-      username: '',
-      password: '',
-    });
+    setFormData({ name: '', host: '', port: 4723, path: '' });
     setTestResult(null);
   };
 
@@ -803,10 +384,7 @@ function AddRemoteServerModal({
       <div className="bg-white rounded-xl shadow-xl w-full max-w-lg">
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <h2 className="text-lg font-semibold text-gray-900">添加远程 Appium 服务器</h2>
-          <button
-            onClick={() => { onClose(); resetForm(); }}
-            className="p-2 hover:bg-gray-100 rounded-lg text-gray-400"
-          >
+          <button onClick={() => { onClose(); resetForm(); }} className="p-2 hover:bg-gray-100 rounded-lg text-gray-400">
             <X size={20} />
           </button>
         </div>
@@ -832,7 +410,7 @@ function AddRemoteServerModal({
                 value={formData.host}
                 onChange={(e) => setFormData({ ...formData, host: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="192.168.1.100 或 appium.example.com"
+                placeholder="192.168.1.100"
                 required
               />
             </div>
@@ -843,7 +421,6 @@ function AddRemoteServerModal({
                 value={formData.port}
                 onChange={(e) => setFormData({ ...formData, port: parseInt(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="4723"
                 required
               />
             </div>
@@ -858,30 +435,7 @@ function AddRemoteServerModal({
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               placeholder="/wd/hub"
             />
-            <p className="text-xs text-gray-500 mt-1">Appium 2.x 通常留空，Appium 1.x 使用 /wd/hub</p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">用户名 (可选)</label>
-              <input
-                type="text"
-                value={formData.username}
-                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="用户名"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">密码 (可选)</label>
-              <input
-                type="password"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="密码"
-              />
-            </div>
+            <p className="text-xs text-gray-500 mt-1">Appium 2.x/3.x 通常留空</p>
           </div>
 
           {testResult && (
@@ -896,16 +450,6 @@ function AddRemoteServerModal({
                   {testResult.message}
                 </span>
               </div>
-              {testResult.serverInfo && (
-                <div className="mt-2 text-sm text-green-600">
-                  Appium 版本: {testResult.serverInfo.version}
-                </div>
-              )}
-              {testResult.devices && testResult.devices.length > 0 && (
-                <div className="mt-2 text-sm text-green-600">
-                  发现 {testResult.devices.length} 台设备
-                </div>
-              )}
             </div>
           )}
 
@@ -916,11 +460,7 @@ function AddRemoteServerModal({
               disabled={!formData.host || !formData.port || isTesting}
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {isTesting ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <Zap size={18} />
-              )}
+              {isTesting ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} />}
               测试连接
             </button>
             <button
@@ -937,51 +477,36 @@ function AddRemoteServerModal({
   );
 }
 
+// ============================================================================
+// 主页面组件
+// ============================================================================
+
 export default function DevicesPage() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<'pools' | 'local' | 'servers'>('pools');
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [editingPool, setEditingPool] = useState<any>(null);
-  const [deletingPool, setDeletingPool] = useState<any>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'local' | 'servers' | 'sessions'>('local');
   const [showAddServerModal, setShowAddServerModal] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [localDevices, setLocalDevices] = useState<LocalDevice[]>([]);
-  const [scanError, setScanError] = useState<string | null>(null);
   const [installDevice, setInstallDevice] = useState<LocalDevice | null>(null);
+  const [isCreateSessionModalOpen, setIsCreateSessionModalOpen] = useState(false);
+  const [sessionActionResult, setSessionActionResult] = useState<{
+    action: string;
+    result: any;
+  } | null>(null);
 
-  const { data: poolsData, isLoading: poolsLoading, refetch: refetchPools } = useQuery({
-    queryKey: ['devicePools'],
-    queryFn: () => devicesApi.listPools(),
-  });
-
-  const { data: devicesData, isLoading: devicesLoading, refetch: refetchDevices } = useQuery({
-    queryKey: ['devices'],
-    queryFn: () => devicesApi.listDevices(),
-  });
-
+  // 数据查询
   const { data: remoteServersData, isLoading: isLoadingServers } = useQuery({
     queryKey: ['remoteServers'],
     queryFn: () => devicesApi.listRemoteServers(),
   });
 
-  const updatePoolMutation = useMutation({
-    mutationFn: ({ poolId, data }: { poolId: string; data: any }) =>
-      devicesApi.updatePool(poolId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['devicePools'] });
-      setEditingPool(null);
-    },
+  const { data: sessionsData, isLoading: isLoadingSessions, refetch: refetchSessions } = useQuery({
+    queryKey: ['activeSessions'],
+    queryFn: () => devicesApi.listSessions(),
+    refetchInterval: 10000,
   });
 
-  const deletePoolMutation = useMutation({
-    mutationFn: (poolId: string) => devicesApi.deletePool(poolId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['devicePools'] });
-      setDeletingPool(null);
-    },
-  });
-
+  // Mutations
   const addServerMutation = useMutation({
     mutationFn: devicesApi.addRemoteServer,
     onSuccess: () => {
@@ -1000,281 +525,127 @@ export default function DevicesPage() {
   const testConnectionMutation = useMutation({
     mutationFn: ({ host, port, path }: { host: string; port: number; path: string }) =>
       devicesApi.testConnection(host, port, path),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['remoteServers'] });
-    },
   });
 
   const refreshServerMutation = useMutation({
     mutationFn: (serverId: string) => devicesApi.refreshRemoteDevices(serverId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['remoteServers'] });
-    },
   });
 
+  // 事件处理
   const handleScanLocal = async () => {
     setIsScanning(true);
-    setScanError(null);
     try {
       const response = await devicesApi.scanLocalDevices();
       setLocalDevices(response.data?.devices || []);
-    } catch (error: any) {
-      setScanError(error.response?.data?.detail || '扫描本地设备失败');
-      setLocalDevices([
-        {
-          id: '1',
-          udid: 'emulator-5554',
-          name: 'Android Emulator',
-          platform: 'android',
-          version: '13.0',
-          status: 'connected',
-          connection: 'usb',
-          model: 'Pixel 6',
-          manufacturer: 'Google',
-        },
-        {
-          id: '2',
-          udid: 'R58M40XXXXX',
-          name: 'Samsung Galaxy S23',
-          platform: 'android',
-          version: '14.0',
-          status: 'connected',
-          connection: 'usb',
-          model: 'SM-S911B',
-          manufacturer: 'Samsung',
-        },
-      ]);
     } finally {
       setIsScanning(false);
     }
   };
 
-  const handleRefreshAll = async () => {
-    setIsRefreshing(true);
-    try {
-      await Promise.all([refetchPools(), refetchDevices()]);
-    } finally {
-      setIsRefreshing(false);
-    }
+  const handleSessionActionResult = (action: string, result: any) => {
+    setSessionActionResult({ action, result });
   };
 
+  // 初始化加载
   useEffect(() => {
     handleScanLocal();
   }, []);
 
-  const pools = poolsData?.data?.items || [];
-  const devices = devicesData?.data?.items || [];
+  // Tab 切换时刷新数据
+  useEffect(() => {
+    if (activeTab === 'local') {
+      handleScanLocal();
+    } else if (activeTab === 'servers') {
+      queryClient.invalidateQueries({ queryKey: ['remoteServers'] });
+    } else if (activeTab === 'sessions') {
+      queryClient.invalidateQueries({ queryKey: ['activeSessions'] });
+    }
+  }, [activeTab, queryClient]);
+
+  // 数据处理
   const remoteServers: RemoteServer[] = (remoteServersData?.data || []).map((s: any) => ({
     ...s,
     status: s.status || 'unknown',
   }));
-  const isLoading = poolsLoading || devicesLoading;
-
-  const totalDevices = devices.length;
-  const availableDevices = devices.filter((d: any) => d.status === 'available').length;
-  const busyDevices = devices.filter((d: any) => d.status === 'busy').length;
+  const sessions: SessionInfo[] = sessionsData?.data?.sessions || [];
   const connectedDevices = localDevices.filter(d => d.status === 'connected');
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* 头部 */}
       <div className="bg-white border-b border-gray-200 sticky top-16 z-40">
         <div className="px-8 py-4">
           <h1 className="text-xl font-bold text-gray-900">设备管理</h1>
-          <p className="text-sm text-gray-500 mt-1">管理设备池、本地设备和远程 Appium 服务器</p>
+          <p className="text-sm text-gray-500 mt-1">管理设备、远程 Appium 服务器和会话</p>
         </div>
 
+        {/* Tab 导航 */}
         <div className="px-8">
           <div className="flex gap-6">
             <button
-              onClick={() => setActiveTab('pools')}
-              className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'pools'
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Monitor size={18} />
-                设备池
-                {pools.length > 0 && (
-                  <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-600 rounded-full">
-                    {pools.length}
-                  </span>
-                )}
-              </div>
-            </button>
-            <button
               onClick={() => setActiveTab('local')}
               className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'local'
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                activeTab === 'local' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
               <div className="flex items-center gap-2">
                 <Usb size={18} />
-                本地设备
+                设备管理
                 {connectedDevices.length > 0 && (
-                  <span className="px-2 py-0.5 text-xs bg-green-100 text-green-600 rounded-full">
-                    {connectedDevices.length}
-                  </span>
+                  <span className="px-2 py-0.5 text-xs bg-green-100 text-green-600 rounded-full">{connectedDevices.length}</span>
                 )}
               </div>
             </button>
             <button
               onClick={() => setActiveTab('servers')}
               className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === 'servers'
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                activeTab === 'servers' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
               <div className="flex items-center gap-2">
                 <Globe size={18} />
                 Appium 服务
                 {remoteServers.length > 0 && (
-                  <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-600 rounded-full">
-                    {remoteServers.length}
-                  </span>
+                  <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-600 rounded-full">{remoteServers.length}</span>
                 )}
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('sessions')}
+              className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'sessions' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Play size={18} />
+                会话
+                <span className={`px-2 py-0.5 text-xs rounded-full ${
+                  sessions.length > 0 ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'
+                }`}>{sessions.length}</span>
               </div>
             </button>
           </div>
         </div>
       </div>
 
+      {/* 内容区域 */}
       <div className="p-8">
-        {activeTab === 'pools' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <div className="grid grid-cols-4 gap-4 flex-1">
-                <div className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="text-sm text-gray-500">设备池</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">{pools.length}</div>
-                </div>
-                <div className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="text-sm text-gray-500">总设备</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">{totalDevices}</div>
-                </div>
-                <div className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="text-sm text-gray-500">空闲设备</div>
-                  <div className="text-2xl font-bold text-green-600 mt-1">{availableDevices}</div>
-                </div>
-                <div className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="text-sm text-gray-500">使用中</div>
-                  <div className="text-2xl font-bold text-blue-600 mt-1">{busyDevices}</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 ml-4">
-                <button
-                  onClick={handleRefreshAll}
-                  disabled={isRefreshing}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 disabled:opacity-50"
-                >
-                  <RefreshCw size={18} className={isRefreshing ? 'animate-spin' : ''} />
-                  <span>刷新</span>
-                </button>
-                <button
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  <Plus size={18} />
-                  <span>新建设备池</span>
-                </button>
-              </div>
-            </div>
-
-            {isLoading ? (
-              <div className="space-y-4">
-                {[1, 2].map((i) => (
-                  <div key={i} className="h-48 bg-gray-100 rounded-xl animate-pulse" />
-                ))}
-              </div>
-            ) : pools.length === 0 ? (
-              <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
-                <Monitor size={48} className="mx-auto text-gray-400 mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">暂无设备池</h3>
-                <p className="text-gray-500 mb-6 max-w-md mx-auto">
-                  创建设备池来组织和管理您的测试设备，支持按项目或用途分组
-                </p>
-                <button
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  创建设备池
-                </button>
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {pools.map((pool: any) => (
-                  <DevicePoolCard
-                    key={pool.id}
-                    pool={pool}
-                    devices={devices}
-                    onEdit={() => setEditingPool(pool)}
-                    onDelete={() => setDeletingPool(pool)}
-                    onRefresh={handleRefreshAll}
-                  />
-                ))}
-              </div>
-            )}
-
-            {devices.filter((d: any) => !d.pool_id).length > 0 && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle size={20} className="text-yellow-600 mt-0.5" />
-                  <div>
-                    <h4 className="font-medium text-yellow-800">
-                      有 {devices.filter((d: any) => !d.pool_id).length} 台设备未分配到设备池
-                    </h4>
-                    <p className="text-sm text-yellow-700 mt-1">
-                      未分配的设备不会被自动用于测试执行，请将它们添加到合适的设备池中
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
+        {/* 本地设备 Tab */}
         {activeTab === 'local' && (
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-gray-500">
-                {isScanning ? '正在扫描本地设备...' : `共发现 ${localDevices.length} 台设备`}
-              </div>
-              <button
-                onClick={handleScanLocal}
-                disabled={isScanning}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                {isScanning ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <RefreshCw size={18} />
-                )}
-                刷新设备
-              </button>
-            </div>
+            {/* 本地设备列表 */}
+            <LocalDeviceList
+              devices={localDevices}
+              isLoading={isScanning}
+              onRefresh={handleScanLocal}
+            />
 
-            {scanError && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-start gap-3">
-                <AlertTriangle size={20} className="text-yellow-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-medium text-yellow-800">扫描提示</div>
-                  <div className="text-sm text-yellow-700 mt-1">{scanError}</div>
-                  <div className="text-sm text-yellow-600 mt-2">
-                    请确保 ADB (Android) 或 Xcode (iOS) 已正确安装并配置
-                  </div>
-                </div>
-              </div>
-            )}
-
+            {/* 连接的设备卡片 */}
             {connectedDevices.length > 0 && (
               <div>
                 <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
                   <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  已连接 ({connectedDevices.length})
+                  已连接设备详情
                 </h3>
                 <div className="grid gap-3">
                   {connectedDevices.map((device) => (
@@ -1284,36 +655,7 @@ export default function DevicesPage() {
               </div>
             )}
 
-            {localDevices.filter(d => d.status !== 'connected').length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-500 mb-3 flex items-center gap-2">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                  已断开 ({localDevices.filter(d => d.status !== 'connected').length})
-                </h3>
-                <div className="grid gap-3 opacity-60">
-                  {localDevices.filter(d => d.status !== 'connected').map((device) => (
-                    <DeviceCard key={device.id} device={device} onInstall={(d) => setInstallDevice(d)} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {localDevices.length === 0 && !isScanning && (
-              <div className="text-center py-16 bg-white rounded-xl border-2 border-dashed border-gray-300">
-                <Smartphone size={48} className="mx-auto text-gray-400 mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">未发现本地设备</h3>
-                <p className="text-gray-500 mb-4 max-w-md mx-auto">
-                  请确保设备已通过 USB 连接并启用了开发者模式 (Android) 或信任此电脑 (iOS)
-                </p>
-                <button
-                  onClick={handleScanLocal}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  重新扫描
-                </button>
-              </div>
-            )}
-
+            {/* 帮助信息 */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <h4 className="font-medium text-blue-900 mb-2">如何连接设备？</h4>
               <div className="grid md:grid-cols-2 gap-4 text-sm text-blue-800">
@@ -1325,7 +667,6 @@ export default function DevicesPage() {
                   <ul className="list-disc list-inside space-y-1 text-blue-700">
                     <li>启用开发者选项和 USB 调试</li>
                     <li>使用 USB 连接设备到电脑</li>
-                    <li>在设备上允许 USB 调试</li>
                     <li>运行 <code className="bg-blue-100 px-1 rounded">adb devices</code> 验证</li>
                   </ul>
                 </div>
@@ -1338,7 +679,6 @@ export default function DevicesPage() {
                     <li>安装 Xcode 和 Command Line Tools</li>
                     <li>使用 USB 连接设备到 Mac</li>
                     <li>在设备上点击"信任此电脑"</li>
-                    <li>运行 <code className="bg-blue-100 px-1 rounded">xcrun xctrace list devices</code></li>
                   </ul>
                 </div>
               </div>
@@ -1346,6 +686,7 @@ export default function DevicesPage() {
           </div>
         )}
 
+        {/* 远程服务器 Tab */}
         {activeTab === 'servers' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -1386,9 +727,7 @@ export default function DevicesPage() {
               <div className="text-center py-16 bg-white rounded-xl border-2 border-dashed border-gray-300">
                 <Server size={48} className="mx-auto text-gray-400 mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-2">未配置远程服务器</h3>
-                <p className="text-gray-500 mb-4 max-w-md mx-auto">
-                  添加远程 Appium 服务器以连接云端或其他机器上的设备
-                </p>
+                <p className="text-gray-500 mb-4">添加远程 Appium 服务器以连接云端或其他机器上的设备</p>
                 <button
                   onClick={() => setShowAddServerModal(true)}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -1407,57 +746,56 @@ export default function DevicesPage() {
                   <li>使用局域网内其他机器上连接的设备</li>
                   <li>搭建分布式测试环境</li>
                 </ul>
-                <p className="mt-2">
-                  <a href="https://appium.io" target="_blank" rel="noopener" className="text-purple-600 hover:underline flex items-center gap-1">
-                    了解更多关于 Appium
-                    <ExternalLink size={14} />
-                  </a>
-                </p>
               </div>
             </div>
           </div>
         )}
+
+        {/* 会话 Tab */}
+        {activeTab === 'sessions' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-gray-500">共 {sessions.length} 个活跃会话</div>
+              <button
+                onClick={() => setIsCreateSessionModalOpen(true)}
+                disabled={connectedDevices.length === 0}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={connectedDevices.length === 0 ? '没有已连接的设备' : '创建 Appium Session'}
+              >
+                <Plus size={18} />
+                创建 Session
+              </button>
+            </div>
+            <SessionList
+              sessions={sessions}
+              isLoading={isLoadingSessions}
+              onRefresh={() => refetchSessions()}
+              onActionResult={handleSessionActionResult}
+            />
+          </div>
+        )}
       </div>
 
-      <CreateDevicePoolModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-      />
-
-      <DevicePoolSettingsModal
-        isOpen={!!editingPool}
-        onClose={() => setEditingPool(null)}
-        pool={editingPool}
-        onSave={(data) => {
-          if (editingPool) {
-            updatePoolMutation.mutate({ poolId: editingPool.id, data });
-          }
-        }}
-      />
-
-      <DeleteConfirmModal
-        isOpen={!!deletingPool}
-        onClose={() => setDeletingPool(null)}
-        onConfirm={() => {
-          if (deletingPool) {
-            deletePoolMutation.mutate(deletingPool.id);
-          }
-        }}
-        title="删除设备池"
-        message={`确定要删除设备池 "${deletingPool?.name}" 吗？此操作无法撤销，池中的设备将变为未分配状态。`}
-        isLoading={deletePoolMutation.isPending}
-      />
-
+      {/* Modals */}
       <AddRemoteServerModal
         isOpen={showAddServerModal}
         onClose={() => setShowAddServerModal(false)}
         onAdd={(data) => addServerMutation.mutate(data)}
       />
 
-      <InstallAppModal
-        isOpen={!!installDevice}
-        onClose={() => setInstallDevice(null)}
-        device={installDevice}
+      <InstallAppModal isOpen={!!installDevice} onClose={() => setInstallDevice(null)} device={installDevice} />
+
+      <CreateSessionModal
+        isOpen={isCreateSessionModalOpen}
+        onClose={() => setIsCreateSessionModalOpen(false)}
+        devices={localDevices}
+      />
+
+      <SessionActionResultModal
+        isOpen={!!sessionActionResult}
+        onClose={() => setSessionActionResult(null)}
+        action={sessionActionResult?.action || ''}
+        result={sessionActionResult?.result}
       />
     </div>
   );

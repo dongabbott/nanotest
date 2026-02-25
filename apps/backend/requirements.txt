@@ -19,7 +19,6 @@ celery==5.3.6
 redis==5.0.1
 
 # Object Storage
-minio==7.2.3
 # Aliyun OSS uses httpx, no additional dependencies needed
 
 # Mobile Automation

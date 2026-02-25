@@ -12,7 +12,7 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
     from app.core.database import AsyncSessionLocal
     from app.domain.models import ScreenAnalysis, TestRun, TestRunNode, TestStepResult
     from app.integrations.llm.client import get_llm_client
-    from app.integrations.minio.client import get_minio_client
+    from app.integrations.aliyun.oss_client import get_oss_client
     from sqlalchemy import select
 
     async def _analyze():
@@ -37,17 +37,14 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
             steps = result.scalars().all()
 
             llm_client = get_llm_client()
-            minio_client = get_minio_client()
+            oss_client = get_oss_client()
             
             analyses_created = 0
 
             for step in steps:
                 try:
                     # Download screenshot
-                    screenshot_bytes = minio_client.download_bytes(
-                        "screenshots",
-                        step.screenshot_object_key,
-                    )
+                    screenshot_bytes = oss_client.download_bytes(step.screenshot_object_key)
 
                     # Run each analysis type
                     for analysis_type in analysis_types:
@@ -90,7 +87,7 @@ def compare_test_runs(self, comparison_id: str) -> dict[str, Any]:
     from app.core.database import AsyncSessionLocal
     from app.domain.models import RunComparison, TestRun, TestStepResult, TestRunNode
     from app.integrations.llm.client import get_llm_client
-    from app.integrations.minio.client import get_minio_client
+    from app.integrations.aliyun.oss_client import get_oss_client
     from sqlalchemy import select
 
     async def _compare():
@@ -104,7 +101,7 @@ def compare_test_runs(self, comparison_id: str) -> dict[str, Any]:
                 return {"success": False, "error": "Comparison not found"}
 
             llm_client = get_llm_client()
-            minio_client = get_minio_client()
+            oss_client = get_oss_client()
 
             # Get screenshots from both runs
             async def get_run_screenshots(run_id):
@@ -129,14 +126,8 @@ def compare_test_runs(self, comparison_id: str) -> dict[str, Any]:
             # Compare matching steps
             for baseline_step, target_step in zip(baseline_steps, target_steps):
                 try:
-                    baseline_bytes = minio_client.download_bytes(
-                        "screenshots",
-                        baseline_step.screenshot_object_key,
-                    )
-                    target_bytes = minio_client.download_bytes(
-                        "screenshots",
-                        target_step.screenshot_object_key,
-                    )
+                    baseline_bytes = oss_client.download_bytes(baseline_step.screenshot_object_key)
+                    target_bytes = oss_client.download_bytes(target_step.screenshot_object_key)
 
                     result = await llm_client.compare_screenshots(
                         baseline_bytes,

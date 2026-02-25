@@ -8,11 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
-from app.domain.models import Device, DevicePool, Project, User
+from app.domain.models import Device, Project, User
 from app.schemas.schemas import (
     DeviceListResponse,
-    DevicePoolCreate,
-    DevicePoolResponse,
     DeviceResponse,
     DeviceUpdate,
     ProjectCreate,
@@ -165,78 +163,13 @@ async def delete_project(
     await db.flush()
 
 
-@router.post(
-    "/{project_id}/device-pools",
-    response_model=DevicePoolResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_device_pool(
-    project_id: UUID,
-    payload: DevicePoolCreate,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a device pool for a project."""
-    result = await db.execute(
-        select(Project).where(
-            Project.id == str(project_id),
-            Project.tenant_id == current_user.tenant_id,
-            Project.deleted_at.is_(None),
-        )
-    )
-    project = result.scalar_one_or_none()
-
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    pool = DevicePool(
-        project_id=str(project_id),
-        name=payload.name,
-        provider=payload.provider,
-    )
-    db.add(pool)
-    await db.flush()
-    await db.refresh(pool)
-    return DevicePoolResponse.model_validate(pool)
-
-
-@router.get("/{project_id}/device-pools", response_model=list[DevicePoolResponse])
-async def list_device_pools(
-    project_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-    db: AsyncSession = Depends(get_db),
-):
-    """List device pools for a project."""
-    result = await db.execute(
-        select(Project).where(
-            Project.id == str(project_id),
-            Project.tenant_id == current_user.tenant_id,
-            Project.deleted_at.is_(None),
-        )
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    result = await db.execute(
-        select(DevicePool).where(DevicePool.project_id == str(project_id))
-    )
-    pools = result.scalars().all()
-    return [DevicePoolResponse.model_validate(p) for p in pools]
-
-
 @router.get("/{project_id}/devices", response_model=DeviceListResponse)
 async def list_project_devices(
     project_id: UUID,
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ):
-    """List all devices for a project across all pools."""
+    """List all devices for a project (devices belonging to this tenant)."""
     result = await db.execute(
         select(Project).where(
             Project.id == str(project_id),
@@ -250,10 +183,12 @@ async def list_project_devices(
             detail="Project not found",
         )
 
+    # Return all devices for this tenant
     result = await db.execute(
-        select(Device)
-        .join(DevicePool)
-        .where(DevicePool.project_id == str(project_id))
+        select(Device).where(
+            Device.tenant_id == str(current_user.tenant_id),
+            Device.deleted_at.is_(None),
+        )
     )
     devices = result.scalars().all()
 
@@ -275,12 +210,10 @@ async def update_device_status(
 ):
     """Update device status."""
     result = await db.execute(
-        select(Device)
-        .join(DevicePool)
-        .join(Project)
-        .where(
+        select(Device).where(
             Device.id == str(device_id),
-            Project.tenant_id == current_user.tenant_id,
+            Device.tenant_id == str(current_user.tenant_id),
+            Device.deleted_at.is_(None),
         )
     )
     device = result.scalar_one_or_none()

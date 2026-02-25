@@ -124,7 +124,7 @@ class AppPackage(Base, TimestampMixin, SoftDeleteMixin):
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)  # bytes
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # SHA256
-    object_key: Mapped[str] = mapped_column(String(500), nullable=False)  # MinIO object key
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False)  # OSS object key
     local_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     
     # Platform
@@ -150,7 +150,7 @@ class AppPackage(Base, TimestampMixin, SoftDeleteMixin):
     
     # Additional metadata
     permissions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # App permissions
-    icon_object_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # App icon in MinIO
+    icon_object_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # App icon object key
     extra_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)  # Any additional info
     
     # Status
@@ -168,6 +168,33 @@ class AppPackage(Base, TimestampMixin, SoftDeleteMixin):
         Index("ix_app_packages_project_platform", "project_id", "platform"),
         Index("ix_app_packages_package_name", "package_name"),
         Index("ix_app_packages_tenant", "tenant_id"),
+    )
+
+
+# =============================================================================
+# Device Management Domain
+# =============================================================================
+
+class RemoteAppiumServer(Base, TimestampMixin, SoftDeleteMixin):
+    __tablename__ = "remote_appium_servers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), nullable=False)
+
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False, default=4723)
+    path: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="unknown")
+    last_connected: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    device_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        Index("ix_remote_appium_servers_tenant", "tenant_id"),
+        Index("ix_remote_appium_servers_host_port", "host", "port"),
     )
 
 
@@ -288,49 +315,6 @@ class Device(Base, TimestampMixin, SoftDeleteMixin):
     tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     last_heartbeat: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     current_run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-
-    # Relationships
-    pool_memberships: Mapped[list["DevicePoolMember"]] = relationship("DevicePoolMember", back_populates="device")
-
-
-class DevicePool(Base, TimestampMixin, SoftDeleteMixin):
-    """Device pool for grouping devices."""
-    __tablename__ = "device_pools"
-
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=generate_uuid
-    )
-    tenant_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("tenants.id"), nullable=False
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    selection_strategy: Mapped[str] = mapped_column(String(50), default="round_robin")  # round_robin, priority, least_used
-    platform_filter: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # ios, android
-    tag_filter: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-
-    # Relationships
-    members: Mapped[list["DevicePoolMember"]] = relationship("DevicePoolMember", back_populates="pool")
-
-
-class DevicePoolMember(Base, TimestampMixin):
-    """Association between devices and pools."""
-    __tablename__ = "device_pool_members"
-
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=generate_uuid
-    )
-    pool_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("device_pools.id"), nullable=False
-    )
-    device_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("devices.id"), nullable=False
-    )
-    priority: Mapped[int] = mapped_column(Integer, default=0)
-
-    # Relationships
-    pool: Mapped["DevicePool"] = relationship("DevicePool", back_populates="members")
-    device: Mapped["Device"] = relationship("Device", back_populates="pool_memberships")
 
 
 class TestPlan(Base, TimestampMixin, SoftDeleteMixin):

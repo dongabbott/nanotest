@@ -17,7 +17,7 @@ from app.domain.models import (
 )
 from app.services.ai_service import AIAnalysisService
 from app.services.risk_engine import RiskEngine, RiskSignalInput
-from app.integrations.minio.client import MinioClient
+from app.integrations.aliyun.oss_client import AliyunOSSClient, get_oss_client
 
 
 class DiffType(str, Enum):
@@ -64,11 +64,11 @@ class ComparisonService:
         self,
         db: AsyncSession,
         ai_service: Optional[AIAnalysisService] = None,
-        minio_client: Optional[MinioClient] = None
+        oss_client: Optional[AliyunOSSClient] = None
     ):
         self.db = db
         self.ai_service = ai_service
-        self.minio_client = minio_client
+        self.oss_client = oss_client
         self.risk_engine = RiskEngine()
     
     async def compare_runs(
@@ -310,10 +310,9 @@ class ComparisonService:
     
     async def _get_screenshot_url(self, object_key: str) -> Optional[str]:
         """Get presigned URL for a screenshot."""
-        if not self.minio_client:
-            return None
         try:
-            return await self.minio_client.presign_get(object_key)
+            client = self.oss_client or get_oss_client()
+            return client.get_download_url(object_key)
         except Exception:
             return None
     
@@ -436,9 +435,6 @@ class ComparisonService:
         risk_score: float
     ) -> Optional[str]:
         """Generate and upload comparison report."""
-        if not self.minio_client:
-            return None
-        
         import json
         from datetime import datetime
         
@@ -461,14 +457,16 @@ class ComparisonService:
         }
         
         object_key = f"reports/comparisons/{baseline_run.project_id}/{baseline_run.id}_{target_run.id}.json"
-        
-        await self.minio_client.put_object(
-            object_key=object_key,
-            data=json.dumps(report, indent=2).encode(),
-            content_type="application/json"
-        )
-        
-        return object_key
+        try:
+            client = self.oss_client or get_oss_client()
+            report_object_key = client.upload_bytes(
+                object_key=object_key,
+                data=json.dumps(report, indent=2).encode("utf-8"),
+                content_type="application/json",
+            )
+            return report_object_key
+        except Exception:
+            return None
     
     async def get_comparison(self, comparison_id: UUID) -> Optional[RunComparison]:
         """Get a comparison by ID."""

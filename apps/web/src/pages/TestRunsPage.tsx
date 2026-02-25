@@ -167,6 +167,7 @@ export default function TestRunsPage() {
     queryFn: () => testRunsApi.list(projectId!, 1, 50),
     enabled: !!projectId,
     refetchInterval: 5000,
+    refetchOnMount: 'always',
   });
 
   const runs = data?.data?.items || [];

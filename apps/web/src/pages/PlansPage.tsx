@@ -203,6 +203,7 @@ export default function PlansPage() {
     queryKey: ['plans', projectId],
     queryFn: () => plansApi.list(projectId!, 1, 50),
     enabled: !!projectId,
+    refetchOnMount: 'always',
   });
 
   const toggleMutation = useMutation({

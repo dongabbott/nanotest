@@ -15,7 +15,7 @@ def generate_run_report(self, run_id: str, report_format: str = "json") -> dict[
         TestRun, TestRunNode, TestStepResult, ScreenAnalysis, 
         RiskSignal, TestCase, TestFlow
     )
-    from app.integrations.minio.client import get_minio_client
+    from app.integrations.aliyun.oss_client import get_oss_client
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
     import json
@@ -153,18 +153,17 @@ def generate_run_report(self, run_id: str, report_format: str = "json") -> dict[
                 "nodes": node_details,
             }
 
-            # Store report in MinIO if needed
+            # Store report in OSS if needed
             if report_format == "json":
-                minio_client = get_minio_client()
+                oss_client = get_oss_client()
                 report_key = f"reports/{run_id}/report.json"
                 report_bytes = json.dumps(report, indent=2).encode("utf-8")
-                minio_client.upload_bytes(
-                    "reports",
-                    report_key,
-                    report_bytes,
+                report_object_key = oss_client.upload_bytes(
+                    object_key=report_key,
+                    data=report_bytes,
                     content_type="application/json",
                 )
-                report["report_url"] = report_key
+                report["report_url"] = report_object_key
 
             return {
                 "success": True,
@@ -361,29 +360,7 @@ def aggregate_comparison_report(
 @celery_app.task(bind=True, name="app.tasks.reports.cleanup_old_reports")
 def cleanup_old_reports(self, retention_days: int = 30) -> dict[str, Any]:
     """Clean up old reports from storage."""
-    from app.integrations.minio.client import get_minio_client
-    from datetime import datetime, timedelta
-
-    try:
-        minio_client = get_minio_client()
-        cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
-        
-        # List and delete old report objects
-        deleted_count = 0
-        objects = minio_client.list_objects("reports", prefix="reports/")
-        
-        for obj in objects:
-            if obj.last_modified and obj.last_modified < cutoff_date:
-                minio_client.delete_object("reports", obj.object_name)
-                deleted_count += 1
-
-        return {
-            "success": True,
-            "deleted_count": deleted_count,
-            "retention_days": retention_days,
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-        }
+    return {
+        "success": False,
+        "error": "Object listing is not supported for OSS client in this deployment.",
+    }

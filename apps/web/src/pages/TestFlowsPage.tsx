@@ -265,6 +265,7 @@ export default function TestFlowsPage() {
     queryKey: ['testFlows', projectId],
     queryFn: () => testFlowsApi.list(projectId!, 1, 50),
     enabled: !!projectId,
+    refetchOnMount: 'always',
   });
 
   const deleteMutation = useMutation({

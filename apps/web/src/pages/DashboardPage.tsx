@@ -17,6 +17,7 @@ export default function DashboardPage() {
     queryKey: ['runs', projectId],
     queryFn: () => testRunsApi.list(projectId!, 1, 10),
     enabled: !!projectId,
+    refetchOnMount: 'always',
   });
 
   const runs = runsData?.data?.items || [];

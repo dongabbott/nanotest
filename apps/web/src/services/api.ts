@@ -59,11 +59,11 @@ export const testCasesApi = {
       params: { page, page_size: pageSize },
     }),
   get: (caseId: string) => apiClient.get(`/api/v1/cases/${caseId}`),
-  create: (projectId: string, data: { name: string; dsl_content: object; tags?: string[] }) =>
+  create: (projectId: string, data: { name: string; description?: string; dsl_content: any; tags?: string[] }) =>
     apiClient.post(`/api/v1/projects/${projectId}/cases`, data),
-  update: (caseId: string, data: Partial<{ name: string; dsl_content: object; tags: string[] }>) =>
+  update: (caseId: string, data: Partial<{ name: string; description?: string; dsl_content: any; tags: string[] }>) =>
     apiClient.put(`/api/v1/cases/${caseId}`, data),
-  validateDsl: (dsl: object) => apiClient.post('/api/v1/cases/validate-dsl', { dsl }),
+  validateDsl: (dsl_content: any) => apiClient.post('/api/v1/cases/validate-dsl', { dsl_content }),
 };
 
 // Test Flows API
@@ -180,6 +180,39 @@ export const devicesApi = {
   
   stopSession: (sessionId: string) =>
     apiClient.delete(`/api/v1/devices/session/${sessionId}`),
+  
+  // ==========================================================================
+  // Session Management (基于包和设备创建/管理 Session)
+  // ==========================================================================
+  
+  // 基于包和设备创建 Session
+  createSessionFromPackage: (data: {
+    device_udid: string;
+    package_id: string;
+    server_url?: string;
+    no_reset?: boolean;
+    full_reset?: boolean;
+    auto_launch?: boolean;
+    extra_capabilities?: Record<string, unknown>;
+  }) => apiClient.post('/api/v1/devices/sessions/create-from-package', data),
+  
+  // 列出所有活跃 Sessions
+  listSessions: () => apiClient.get('/api/v1/devices/sessions'),
+  
+  // 获取 Session 详情
+  getSession: (sessionId: string) => apiClient.get(`/api/v1/devices/sessions/${sessionId}`),
+  
+  // 执行 Session 操作 (screenshot, source, launch_app, close_app, reset_app)
+  performSessionAction: (sessionId: string, action: string, appId?: string) =>
+    apiClient.post(`/api/v1/devices/sessions/${sessionId}/action`, { action, app_id: appId }),
+  
+  // 刷新 Session 状态
+  refreshSession: (sessionId: string) =>
+    apiClient.post(`/api/v1/devices/sessions/${sessionId}/refresh`),
+  
+  // 终止 Session 并释放设备
+  terminateSession: (sessionId: string) =>
+    apiClient.delete(`/api/v1/devices/sessions/${sessionId}/terminate`),
 };
 
 // Plans API
@@ -209,14 +242,6 @@ export const plansApi = {
     apiClient.delete(`/api/v1/plans/${planId}`),
   trigger: (planId: string) =>
     apiClient.post(`/api/v1/plans/${planId}/runs`, {}),
-};
-
-// Assets API
-export const assetsApi = {
-  getUploadUrl: (filename: string, contentType: string) =>
-    apiClient.post('/api/v1/assets/presign-upload', { filename, content_type: contentType }),
-  getDownloadUrl: (objectKey: string) =>
-    apiClient.post('/api/v1/assets/presign-download', { object_key: objectKey }),
 };
 
 // Packages API

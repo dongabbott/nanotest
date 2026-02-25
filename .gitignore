@@ -156,12 +156,12 @@ coverage/
 # Appium screenshots
 screenshots/
 
-# MinIO local data
-minio-data/
-
 # Alembic auto-generated
 migrations/versions/__pycache__/
 
 # Build artifacts
 *.tar.gz
 *.zip
+
+*.apk
+*.ipa

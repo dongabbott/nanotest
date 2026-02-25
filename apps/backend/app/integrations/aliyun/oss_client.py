@@ -10,10 +10,11 @@ from dataclasses import dataclass
 import httpx
 import structlog
 
+from app.core.config import settings
+
 logger = structlog.get_logger()
 
-# 获取 STS Token 的接口地址
-STS_TOKEN_URL = "https://admin.shiguangxiaowu.cn/rhea/users/file_store_token"
+DEFAULT_OSS_STS_TOKEN_URL = "https://admin.shiguangxiaowu.cn/rhea/users/file_store_token"
 
 
 @dataclass
@@ -50,7 +51,8 @@ class AliyunOSSClient:
         """从接口获取 STS Token"""
         logger.info("Fetching Aliyun OSS STS token...")
         try:
-            response = httpx.get(STS_TOKEN_URL, timeout=30)
+            sts_url = settings.oss_sts_token_url or DEFAULT_OSS_STS_TOKEN_URL
+            response = httpx.get(sts_url, timeout=30)
             response.raise_for_status()
             data = response.json()
             

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
     
     # Application
@@ -40,15 +41,8 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
     
-    # MinIO
-    minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
-    minio_bucket: str = "nanotest"  # 默认 bucket
-    minio_bucket_screenshots: str = "screenshots"
-    minio_bucket_reports: str = "reports"
-    minio_bucket_logs: str = "logs"
-    minio_secure: bool = False
+    # Object Storage (Aliyun OSS)
+    oss_sts_token_url: Optional[str] = None
     
     # Appium
     appium_server_url: str = "http://localhost:4723"
