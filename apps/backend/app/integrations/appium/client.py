@@ -1,0 +1,290 @@
+"""Appium client integration for mobile automation."""
+import base64
+from typing import Any, Optional
+
+from appium import webdriver
+from appium.options.android import UiAutomator2Options
+from appium.options.ios import XCUITestOptions
+from appium.webdriver.common.appiumby import AppiumBy
+
+from app.core.config import settings
+
+
+class AppiumClient:
+    """Appium client wrapper for mobile automation."""
+
+    def __init__(
+        self,
+        platform: str,
+        device_udid: str,
+        platform_version: str,
+        app_path: Optional[str] = None,
+        app_package: Optional[str] = None,
+        app_activity: Optional[str] = None,
+        bundle_id: Optional[str] = None,
+    ):
+        self.platform = platform.lower()
+        self.device_udid = device_udid
+        self.platform_version = platform_version
+        self.app_path = app_path
+        self.app_package = app_package
+        self.app_activity = app_activity
+        self.bundle_id = bundle_id
+        self._driver: Optional[webdriver.Remote] = None
+
+    def _get_capabilities(self) -> dict[str, Any]:
+        """Get Appium capabilities based on platform."""
+        if self.platform == "android":
+            options = UiAutomator2Options()
+            options.platform_name = "Android"
+            options.device_name = self.device_udid
+            options.udid = self.device_udid
+            options.platform_version = self.platform_version
+            options.automation_name = "UiAutomator2"
+            options.new_command_timeout = settings.appium_session_timeout
+            
+            if self.app_path:
+                options.app = self.app_path
+            if self.app_package:
+                options.app_package = self.app_package
+            if self.app_activity:
+                options.app_activity = self.app_activity
+            
+            return options.to_capabilities()
+        
+        elif self.platform == "ios":
+            options = XCUITestOptions()
+            options.platform_name = "iOS"
+            options.device_name = self.device_udid
+            options.udid = self.device_udid
+            options.platform_version = self.platform_version
+            options.automation_name = "XCUITest"
+            options.new_command_timeout = settings.appium_session_timeout
+            
+            if self.app_path:
+                options.app = self.app_path
+            if self.bundle_id:
+                options.bundle_id = self.bundle_id
+            
+            return options.to_capabilities()
+        
+        else:
+            raise ValueError(f"Unsupported platform: {self.platform}")
+
+    def start_session(self) -> None:
+        """Start an Appium session."""
+        capabilities = self._get_capabilities()
+        self._driver = webdriver.Remote(
+            command_executor=settings.appium_server_url,
+            options=capabilities,
+        )
+
+    def stop_session(self) -> None:
+        """Stop the Appium session."""
+        if self._driver:
+            self._driver.quit()
+            self._driver = None
+
+    @property
+    def driver(self) -> webdriver.Remote:
+        """Get the Appium driver."""
+        if not self._driver:
+            raise RuntimeError("Appium session not started")
+        return self._driver
+
+    # ==========================================================================
+    # Element Finding
+    # ==========================================================================
+
+    def find_element(self, locator_type: str, locator_value: str):
+        """Find an element using various locator strategies."""
+        by_map = {
+            "id": AppiumBy.ID,
+            "xpath": AppiumBy.XPATH,
+            "accessibility_id": AppiumBy.ACCESSIBILITY_ID,
+            "class_name": AppiumBy.CLASS_NAME,
+            "name": AppiumBy.NAME,
+            "css": AppiumBy.CSS_SELECTOR,
+            "android_uiautomator": AppiumBy.ANDROID_UIAUTOMATOR,
+            "ios_predicate": AppiumBy.IOS_PREDICATE,
+            "ios_class_chain": AppiumBy.IOS_CLASS_CHAIN,
+        }
+        by = by_map.get(locator_type.lower())
+        if not by:
+            raise ValueError(f"Unknown locator type: {locator_type}")
+        return self.driver.find_element(by, locator_value)
+
+    def find_elements(self, locator_type: str, locator_value: str):
+        """Find multiple elements using various locator strategies."""
+        by_map = {
+            "id": AppiumBy.ID,
+            "xpath": AppiumBy.XPATH,
+            "accessibility_id": AppiumBy.ACCESSIBILITY_ID,
+            "class_name": AppiumBy.CLASS_NAME,
+        }
+        by = by_map.get(locator_type.lower())
+        if not by:
+            raise ValueError(f"Unknown locator type: {locator_type}")
+        return self.driver.find_elements(by, locator_value)
+
+    # ==========================================================================
+    # Actions
+    # ==========================================================================
+
+    def tap(self, locator_type: str, locator_value: str) -> None:
+        """Tap on an element."""
+        element = self.find_element(locator_type, locator_value)
+        element.click()
+
+    def input_text(self, locator_type: str, locator_value: str, text: str) -> None:
+        """Input text into an element."""
+        element = self.find_element(locator_type, locator_value)
+        element.clear()
+        element.send_keys(text)
+
+    def clear_text(self, locator_type: str, locator_value: str) -> None:
+        """Clear text from an element."""
+        element = self.find_element(locator_type, locator_value)
+        element.clear()
+
+    def swipe(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        duration: int = 500,
+    ) -> None:
+        """Perform a swipe gesture."""
+        self.driver.swipe(start_x, start_y, end_x, end_y, duration)
+
+    def scroll_down(self) -> None:
+        """Scroll down on the screen."""
+        size = self.driver.get_window_size()
+        start_x = size["width"] // 2
+        start_y = int(size["height"] * 0.8)
+        end_y = int(size["height"] * 0.2)
+        self.swipe(start_x, start_y, start_x, end_y)
+
+    def scroll_up(self) -> None:
+        """Scroll up on the screen."""
+        size = self.driver.get_window_size()
+        start_x = size["width"] // 2
+        start_y = int(size["height"] * 0.2)
+        end_y = int(size["height"] * 0.8)
+        self.swipe(start_x, start_y, start_x, end_y)
+
+    def long_press(
+        self,
+        locator_type: str,
+        locator_value: str,
+        duration: int = 1000,
+    ) -> None:
+        """Long press on an element."""
+        element = self.find_element(locator_type, locator_value)
+        # Use ActionChains for long press
+        from selenium.webdriver.common.action_chains import ActionChains
+        actions = ActionChains(self.driver)
+        actions.click_and_hold(element).pause(duration / 1000).release().perform()
+
+    def back(self) -> None:
+        """Press the back button."""
+        self.driver.back()
+
+    def home(self) -> None:
+        """Press the home button (Android only)."""
+        if self.platform == "android":
+            self.driver.press_keycode(3)  # KEYCODE_HOME
+
+    # ==========================================================================
+    # App Management
+    # ==========================================================================
+
+    def launch_app(self, app_id: Optional[str] = None) -> None:
+        """Launch the app."""
+        if app_id:
+            self.driver.activate_app(app_id)
+        else:
+            self.driver.activate_app(
+                self.bundle_id if self.platform == "ios" else self.app_package
+            )
+
+    def close_app(self, app_id: Optional[str] = None) -> None:
+        """Close the app."""
+        if app_id:
+            self.driver.terminate_app(app_id)
+        else:
+            self.driver.terminate_app(
+                self.bundle_id if self.platform == "ios" else self.app_package
+            )
+
+    def reset_app(self) -> None:
+        """Reset the app state."""
+        app_id = self.bundle_id if self.platform == "ios" else self.app_package
+        if app_id:
+            self.driver.terminate_app(app_id)
+            self.driver.activate_app(app_id)
+
+    # ==========================================================================
+    # Screenshots & State
+    # ==========================================================================
+
+    def take_screenshot(self) -> bytes:
+        """Take a screenshot and return as bytes."""
+        screenshot_base64 = self.driver.get_screenshot_as_base64()
+        return base64.b64decode(screenshot_base64)
+
+    def get_page_source(self) -> str:
+        """Get the current page source (XML hierarchy)."""
+        return self.driver.page_source
+
+    def get_window_size(self) -> dict[str, int]:
+        """Get the window size."""
+        return self.driver.get_window_size()
+
+    # ==========================================================================
+    # Waits & Assertions
+    # ==========================================================================
+
+    def wait_for_element(
+        self,
+        locator_type: str,
+        locator_value: str,
+        timeout: int = 10,
+    ):
+        """Wait for an element to be present."""
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+
+        by_map = {
+            "id": AppiumBy.ID,
+            "xpath": AppiumBy.XPATH,
+            "accessibility_id": AppiumBy.ACCESSIBILITY_ID,
+        }
+        by = by_map.get(locator_type.lower(), AppiumBy.ID)
+
+        wait = WebDriverWait(self.driver, timeout)
+        return wait.until(EC.presence_of_element_located((by, locator_value)))
+
+    def element_exists(self, locator_type: str, locator_value: str) -> bool:
+        """Check if an element exists."""
+        try:
+            elements = self.find_elements(locator_type, locator_value)
+            return len(elements) > 0
+        except Exception:
+            return False
+
+    def get_element_text(self, locator_type: str, locator_value: str) -> str:
+        """Get the text of an element."""
+        element = self.find_element(locator_type, locator_value)
+        return element.text
+
+    def get_element_attribute(
+        self,
+        locator_type: str,
+        locator_value: str,
+        attribute: str,
+    ) -> Optional[str]:
+        """Get an attribute value from an element."""
+        element = self.find_element(locator_type, locator_value)
+        return element.get_attribute(attribute)
