@@ -157,6 +157,7 @@ class AppiumRunner(BaseRunner):
             status=StepStatus.RUNNING,
             started_at=started_at,
         )
+        result.metadata = dict(step.metadata or {})
 
         try:
             # Get action handler
@@ -175,7 +176,9 @@ class AppiumRunner(BaseRunner):
             # Update result based on action output
             if action_result:
                 result.actual_value = action_result.get("actual_value")
-                result.metadata = action_result.get("metadata", {})
+                action_metadata = action_result.get("metadata", {}) or {}
+                if isinstance(action_metadata, dict):
+                    result.metadata.update(action_metadata)
 
             result.status = StepStatus.PASSED
             result.expected_value = step.expected_value

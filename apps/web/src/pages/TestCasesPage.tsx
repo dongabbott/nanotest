@@ -92,7 +92,16 @@ function TestCaseEditorModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+    e.stopPropagation();
+
+    // Guard: ignore submits not triggered by our explicit submit button.
+    // Some nested buttons/components inside the form may accidentally trigger a submit.
+    const nativeEvent: any = (e as any).nativeEvent;
+    if (nativeEvent?.submitter && nativeEvent.submitter?.getAttribute) {
+      const isOurSubmit = nativeEvent.submitter.getAttribute('data-submit') === 'true';
+      if (!isOurSubmit) return;
+    }
+
     let finalDsl: any;
     let finalName: string;
     let finalTags: string[];
@@ -201,9 +210,13 @@ function TestCaseEditorModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className={`bg-white rounded-xl shadow-xl overflow-hidden flex flex-col transition-all duration-300 ${
-        showInspector ? 'w-[95vw] h-[95vh] max-w-none' : 'w-full max-w-4xl max-h-[90vh]'
-      }`}>
+      <div
+        className={`bg-white rounded-xl shadow-xl overflow-hidden flex flex-col transition-all duration-300 ${
+          showInspector ? 'w-[95vw] h-[95vh] max-w-none' : 'w-full max-w-4xl max-h-[90vh]'
+        }`}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* 头部 */}
         <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
           <div>
@@ -299,7 +312,18 @@ function TestCaseEditorModal({
         )}
 
         {/* 内容区域 */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-hidden flex flex-col">
+        <form
+          onSubmit={handleSubmit}
+          className="flex-1 overflow-hidden flex flex-col"
+          onKeyDown={(e) => {
+            // Avoid Enter in inputs triggering submit implicitly while editing.
+            if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) {
+              const target = e.target as HTMLElement;
+              const tag = target.tagName?.toLowerCase();
+              if (tag === 'input') e.preventDefault();
+            }
+          }}
+        >
           <div className="flex-1 overflow-hidden flex">
             {/* 左侧编辑区 */}
             <div className={`flex-1 overflow-auto p-6 ${showInspector && activeTab === 'visual' ? 'border-r border-gray-200' : ''}`}>
@@ -427,6 +451,7 @@ function TestCaseEditorModal({
               </button>
               <button
                 type="submit"
+                data-submit="true"
                 disabled={saveMutation.isPending}
                 className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
               >

@@ -475,7 +475,7 @@ async def _execute_flow_with_dag(
                 run_node_id=node_record.id,
                 step_index=s.step_index,
                 action=s.action,
-                input_payload={"value": s.actual_value},
+                input_payload={"value": s.actual_value, "metadata": s.metadata},
                 status=s.status.value,
                 assertion_result={
                     "expected": s.expected_value,
@@ -712,7 +712,7 @@ async def _execute_node_with_appium(
                     "duration_ms": s.duration_ms,
                     "error_message": s.error_message,
                     "screenshot_path": s.screenshot_path,
-                    "input_payload": {"value": s.actual_value},
+                    "input_payload": {"value": s.actual_value, "metadata": s.metadata},
                     "assertion_result": {
                         "expected": s.expected_value,
                         "actual": s.actual_value,
