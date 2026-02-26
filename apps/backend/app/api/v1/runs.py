@@ -875,3 +875,23 @@ async def get_comparison(
         )
 
     return RunComparisonResponse.model_validate(comparison)
+
+
+@router.get("/oss/presign")
+async def presign_oss_object(
+    object_key: str = Query(..., description="OSS object key, e.g. screenshots/..."),
+    expires: int = Query(3600, ge=60, le=24 * 3600, description="URL expiry in seconds"),
+    current_user: Annotated[User, Depends(get_current_active_user)] = None,
+):
+    """Generate a short-lived presigned URL for an OSS object.
+
+    Used by the Web UI to preview screenshots and download logs.
+    """
+    try:
+        from app.integrations.aliyun.oss_client import get_oss_client
+
+        client = get_oss_client()
+        url = client.get_download_url(object_key, expires=expires)
+        return {"url": url, "expires_in": expires}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to presign OSS url: {e}")

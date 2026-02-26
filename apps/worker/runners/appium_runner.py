@@ -206,13 +206,27 @@ class AppiumRunner(BaseRunner):
             )
 
             # Take screenshot and upload to OSS
-            should_capture = self.context.screenshot_on_step or (
-                self.context.screenshot_on_failure
-                and result.status in (StepStatus.FAILED, StepStatus.ERROR)
+            # Plan A: if the step is an explicit 'screenshot' action, do not double-capture
+            # (the step itself is used as a marker; automatic capture is skipped)
+            is_explicit_screenshot_step = (step.action or '').lower() == 'screenshot'
+
+            should_capture = (not is_explicit_screenshot_step) and (
+                self.context.screenshot_on_step or (
+                    self.context.screenshot_on_failure
+                    and result.status in (StepStatus.FAILED, StepStatus.ERROR)
+                )
             )
+
             if should_capture:
+                capture_started = datetime.utcnow()
                 screenshot = await self.take_screenshot()
+                capture_ended = datetime.utcnow()
+                result.metadata["screenshot_capture_ms"] = int(
+                    (capture_ended - capture_started).total_seconds() * 1000
+                )
+
                 if screenshot:
+                    upload_started = datetime.utcnow()
                     label = result.status.value
                     # Prefer the external callback if set, otherwise upload to OSS
                     if self._screenshot_callback:
@@ -226,6 +240,10 @@ class AppiumRunner(BaseRunner):
                         result.screenshot_path = await self._upload_screenshot(
                             screenshot, step.index, label
                         )
+                    upload_ended = datetime.utcnow()
+                    result.metadata["screenshot_upload_ms"] = int(
+                        (upload_ended - upload_started).total_seconds() * 1000
+                    )
 
         return result
 

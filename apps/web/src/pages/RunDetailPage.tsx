@@ -118,8 +118,27 @@ function StepRow({ step, index }: { step: any; index: number }) {
   const [expanded, setExpanded] = useState(step.status === 'failed');
   const cfg = getStatus(step.status);
 
+  const meta = step.input_payload?.metadata || {};
+  const screenshotCaptureMs = typeof meta.screenshot_capture_ms === 'number' ? meta.screenshot_capture_ms : null;
+  const screenshotUploadMs = typeof meta.screenshot_upload_ms === 'number' ? meta.screenshot_upload_ms : null;
+
   const hasDetail = step.error_message || step.assertion_result?.expected || step.screenshot_object_key ||
-    (step.input_payload && Object.keys(step.input_payload).length > 0);
+    (step.input_payload && Object.keys(step.input_payload).length > 0) ||
+    screenshotCaptureMs != null || screenshotUploadMs != null;
+
+  const [openingScreenshot, setOpeningScreenshot] = useState(false);
+
+  const openScreenshot = async () => {
+    if (!step.screenshot_object_key) return;
+    setOpeningScreenshot(true);
+    try {
+      const resp = await testRunsApi.presignOssObject(step.screenshot_object_key, 3600);
+      const url = resp.data?.url;
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    } finally {
+      setOpeningScreenshot(false);
+    }
+  };
 
   return (
     <div className={`border-l-2 ${step.status === 'failed' ? 'border-red-400' : step.status === 'passed' ? 'border-green-300' : 'border-gray-200'}`}>
@@ -199,12 +218,36 @@ function StepRow({ step, index }: { step: any; index: number }) {
             </div>
           )}
 
+          {/* 截图耗时 */}
+          {(screenshotCaptureMs != null || screenshotUploadMs != null) && (
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <Image size={14} />
+              <span>截图耗时：</span>
+              <span className="font-mono">
+                {screenshotCaptureMs != null ? `采集 ${screenshotCaptureMs}ms` : ''}
+                {screenshotCaptureMs != null && screenshotUploadMs != null ? ' · ' : ''}
+                {screenshotUploadMs != null ? `上传 ${screenshotUploadMs}ms` : ''}
+              </span>
+            </div>
+          )}
+
           {/* 截图 */}
           {step.screenshot_object_key && (
             <div className="flex items-center gap-2 text-xs text-gray-500">
               <Image size={14} />
               <span>截图：</span>
               <CopyText text={step.screenshot_object_key} />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openScreenshot();
+                }}
+                disabled={openingScreenshot}
+                className="ml-1 px-2 py-0.5 border border-gray-300 rounded hover:bg-gray-50 text-gray-600 disabled:opacity-50"
+              >
+                {openingScreenshot ? '打开中...' : '查看'}
+              </button>
             </div>
           )}
 

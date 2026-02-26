@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, FileCode, Tag, X, Edit, Trash2, Eye, Code, Copy, Check, PanelRightOpen, PanelRightClose } from 'lucide-react';
-import { testCasesApi } from '../services/api';
+import { testCasesApi, devicesApi } from '../services/api';
 import TestCaseStepDesigner, { TestCaseDsl } from '../components/TestCaseStepDesigner';
 import ElementInspector, { Selector } from '../components/ElementInspector';
+import type { LocalDevice } from '../components/devices/types';
 
 // 创建/编辑测试用例弹窗
 function TestCaseEditorModal({
@@ -205,6 +206,15 @@ function TestCaseEditorModal({
     // 提示用户已选择元素
     setTimeout(() => setPendingSelector(null), 3000);
   };
+
+  const { data: devicesData } = useQuery({
+    queryKey: ['localDevices'],
+    queryFn: () => devicesApi.scanLocalDevices(),
+    enabled: isOpen && showInspector,
+    refetchOnWindowFocus: false,
+  });
+
+  const localDevices: LocalDevice[] = devicesData?.data?.devices || [];
 
   if (!isOpen) return null;
 
@@ -428,6 +438,7 @@ function TestCaseEditorModal({
               <div className="w-[55%] flex-shrink-0 overflow-hidden">
                 <ElementInspector
                   onSelectElement={handleSelectElement}
+                  devices={localDevices}
                   className="h-full rounded-none border-0"
                 />
               </div>

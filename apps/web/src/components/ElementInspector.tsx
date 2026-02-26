@@ -16,6 +16,7 @@ import {
   Crosshair,
 } from 'lucide-react';
 import { devicesApi } from '../services/api';
+import { CreateSessionModal } from './devices';
 
 // ============ 类型定义 ============
 
@@ -47,6 +48,8 @@ interface SessionInfo {
 interface ElementInspectorProps {
   onSelectElement?: (selector: Selector) => void;
   className?: string;
+  // When provided, ElementInspector can show a "Create Session" entry point.
+  devices?: { udid: string; status: string }[];
 }
 
 // ============ XML 解析器 ============
@@ -564,7 +567,7 @@ function ScreenshotView({
 
 // ============ 主组件 ============
 
-export default function ElementInspector({ onSelectElement, className = '' }: ElementInspectorProps) {
+export default function ElementInspector({ onSelectElement, className = '', devices = [] }: ElementInspectorProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [elementTree, setElementTree] = useState<ElementNode | null>(null);
   const [screenshot, setScreenshot] = useState<string | null>(null);
@@ -572,6 +575,7 @@ export default function ElementInspector({ onSelectElement, className = '' }: El
   const [hoveredNode, setHoveredNode] = useState<ElementNode | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'tree' | 'attributes'>('tree');
+  const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
   // 默认屏幕尺寸，用于坐标转换（实际会根据截图和设备信息调整）
   const screenSize = { width: 1080, height: 1920 };
 
@@ -652,20 +656,41 @@ export default function ElementInspector({ onSelectElement, className = '' }: El
 
   if (sessions.length === 0 && !loadingSessions) {
     return (
-      <div className={`flex flex-col items-center justify-center h-full bg-gray-50 rounded-lg border-2 border-dashed border-gray-300 p-6 ${className}`}>
-        <Smartphone size={48} className="text-gray-300 mb-4" />
-        <h3 className="text-lg font-medium text-gray-700 mb-2">无活跃会话</h3>
-        <p className="text-sm text-gray-500 text-center mb-4">
-          请先在「设备管理」中创建一个 Appium Session，<br />然后返回此处选择元素
-        </p>
-        <button
-          onClick={() => refetchSessions()}
-          className="flex items-center gap-2 px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg"
-        >
-          <RefreshCw size={16} />
-          刷新列表
-        </button>
-      </div>
+      <>
+        <div className={`flex flex-col items-center justify-center h-full bg-gray-50 rounded-lg border-2 border-dashed border-gray-300 p-6 ${className}`}>
+          <Smartphone size={48} className="text-gray-300 mb-4" />
+          <h3 className="text-lg font-medium text-gray-700 mb-2">无活跃会话</h3>
+          <p className="text-sm text-gray-500 text-center mb-4">
+            请先创建一个 Appium Session，然后返回此处选择元素
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => refetchSessions()}
+              className="flex items-center gap-2 px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg"
+            >
+              <RefreshCw size={16} />
+              刷新列表
+            </button>
+            <button
+              onClick={() => setIsCreateSessionOpen(true)}
+              disabled={devices.length === 0}
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              title={devices.length === 0 ? '没有可用设备，无法创建 Session' : '创建新的 Appium Session'}
+            >
+              创建 Session
+            </button>
+          </div>
+        </div>
+
+        <CreateSessionModal
+          isOpen={isCreateSessionOpen}
+          onClose={() => {
+            setIsCreateSessionOpen(false);
+            refetchSessions();
+          }}
+          devices={devices as any}
+        />
+      </>
     );
   }
 

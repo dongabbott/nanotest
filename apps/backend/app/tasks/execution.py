@@ -326,7 +326,8 @@ def _build_execution_context(
         "variables": env.get("variables", {}),
         "use_real_runner": env.get("use_real_runner", False),
         "screenshot_on_failure": env.get("screenshot_on_failure", True),
-        "screenshot_on_step": env.get("screenshot_on_step", False),
+        # If env_config does not specify screenshot_on_step, decide later based on runner type.
+        "screenshot_on_step": env.get("screenshot_on_step"),
     }
 
     # Add device info from DB device record
@@ -371,6 +372,12 @@ def _build_execution_context(
     # If an appium_session_id is present, force real runner
     if context.get("appium_session_id"):
         context["use_real_runner"] = True
+
+    # Default screenshot policy:
+    # - Real device/Appium execution: capture screenshots on each step unless explicitly disabled.
+    # - Mock execution: default stays False (avoid useless uploads)
+    if context.get("screenshot_on_step") is None:
+        context["screenshot_on_step"] = bool(context.get("use_real_runner"))
 
     return context
 

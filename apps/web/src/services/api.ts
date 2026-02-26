@@ -113,6 +113,8 @@ export const testRunsApi = {
   aiAnalyze: (runId: string) => apiClient.post(`/api/v1/runs/${runId}/ai-analyze`),
   getAiSummary: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/ai-summary`),
   getRiskScore: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/risk-score`),
+  presignOssObject: (objectKey: string, expires = 3600) =>
+    apiClient.get('/api/v1/oss/presign', { params: { object_key: objectKey, expires } }),
 };
 
 // Comparisons API
