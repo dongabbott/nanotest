@@ -50,6 +50,7 @@ class AppiumRunner(BaseRunner):
         super().__init__(context)
         self._client = None
         self._screenshot_callback = None
+        self._oss_client = None
 
     def set_screenshot_callback(self, callback):
         """Set callback for saving screenshots."""
@@ -96,6 +97,44 @@ class AppiumRunner(BaseRunner):
             return await loop.run_in_executor(None, self._client.take_screenshot)
         except Exception as e:
             logger.warning(f"Failed to take screenshot: {e}")
+            return None
+
+    async def _upload_screenshot(
+        self,
+        screenshot: bytes,
+        step_index: int,
+        label: str = "",
+    ) -> Optional[str]:
+        """Upload screenshot to Aliyun OSS and return the object key.
+
+        Path format:
+          screenshots/{run_id}/{node_key}/{step_index}_{label}_{timestamp}.png
+        """
+        try:
+            from app.integrations.aliyun.oss_client import get_oss_client
+
+            if self._oss_client is None:
+                self._oss_client = get_oss_client()
+
+            timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")[:-3]
+            suffix = f"_{label}" if label else ""
+            object_key = (
+                f"screenshots/{self.context.run_id}/"
+                f"step{step_index}{suffix}_{timestamp}.png"
+            )
+
+            loop = asyncio.get_event_loop()
+            full_key = await loop.run_in_executor(
+                None,
+                lambda: self._oss_client.upload_bytes(
+                    object_key, screenshot, "image/png"
+                ),
+            )
+            logger.info(f"Screenshot uploaded: {full_key}")
+            return full_key
+
+        except Exception as e:
+            logger.warning(f"Failed to upload screenshot to OSS: {e}")
             return None
 
     async def get_page_source(self) -> Optional[str]:
@@ -163,19 +202,27 @@ class AppiumRunner(BaseRunner):
                 (result.ended_at - started_at).total_seconds() * 1000
             )
 
-            # Take screenshot if configured
-            if self.context.screenshot_on_step or (
+            # Take screenshot and upload to OSS
+            should_capture = self.context.screenshot_on_step or (
                 self.context.screenshot_on_failure
                 and result.status in (StepStatus.FAILED, StepStatus.ERROR)
-            ):
+            )
+            if should_capture:
                 screenshot = await self.take_screenshot()
-                if screenshot and self._screenshot_callback:
-                    path = await self._screenshot_callback(
-                        self.context.run_id,
-                        step.index,
-                        screenshot,
-                    )
-                    result.screenshot_path = path
+                if screenshot:
+                    label = result.status.value
+                    # Prefer the external callback if set, otherwise upload to OSS
+                    if self._screenshot_callback:
+                        path = await self._screenshot_callback(
+                            self.context.run_id,
+                            step.index,
+                            screenshot,
+                        )
+                        result.screenshot_path = path
+                    else:
+                        result.screenshot_path = await self._upload_screenshot(
+                            screenshot, step.index, label
+                        )
 
         return result
 

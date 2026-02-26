@@ -527,20 +527,60 @@ async def create_flow_run(
             )
 
         caps = session_info.get("capabilities") or {}
-        env_config.setdefault("use_real_runner", True)
-        env_config.setdefault("appium_server_url", session_info.get("server_url"))
-        env_config.setdefault("appium_session_id", payload.appium_session_id)
+        env_config["use_real_runner"] = True
+        env_config["appium_server_url"] = session_info.get("server_url")
+        env_config["appium_session_id"] = payload.appium_session_id
 
-        platform = (caps.get("platformName") or caps.get("platform") or "").lower() or None
-        device_udid = caps.get("udid") or caps.get("deviceUDID") or caps.get("device_udid")
-        platform_version = caps.get("platformVersion") or caps.get("platform_version")
+        # Platform info — from session top-level fields first, then caps
+        platform = (
+            session_info.get("platform")
+            or (caps.get("platformName") or caps.get("platform") or "").lower()
+            or None
+        )
+        device_udid = (
+            session_info.get("device_udid")
+            or caps.get("appium:udid")
+            or caps.get("udid")
+            or caps.get("deviceUDID")
+            or caps.get("device_udid")
+        )
+        platform_version = (
+            session_info.get("platform_version")
+            or caps.get("appium:platformVersion")
+            or caps.get("platformVersion")
+            or caps.get("platform_version")
+        )
 
         if platform:
-            env_config.setdefault("platform", platform)
+            env_config["platform"] = platform
         if device_udid:
-            env_config.setdefault("device_udid", device_udid)
+            env_config["device_udid"] = device_udid
         if platform_version:
-            env_config.setdefault("platform_version", str(platform_version))
+            env_config["platform_version"] = str(platform_version)
+
+        # App identity — extract from session-level fields and caps
+        app_package = (
+            session_info.get("package_name")
+            or caps.get("appium:appPackage")
+            or caps.get("appPackage")
+        )
+        app_activity = (
+            caps.get("appium:appActivity")
+            or caps.get("appActivity")
+        )
+        bundle_id = (
+            session_info.get("package_name") if platform == "ios" else None
+        ) or caps.get("appium:bundleId") or caps.get("bundleId")
+        app_path = caps.get("appium:app") or caps.get("app")
+
+        if app_package:
+            env_config["app_package"] = app_package
+        if app_activity:
+            env_config["app_activity"] = app_activity
+        if bundle_id:
+            env_config["bundle_id"] = bundle_id
+        if app_path:
+            env_config["app_path"] = app_path
 
     test_run = TestRun(
         project_id=flow.project_id,

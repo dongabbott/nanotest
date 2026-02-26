@@ -431,29 +431,11 @@ class FlowRunner:
             test_case_id = binding["test_case_id"]
             test_case = test_cases.get(test_case_id, {})
 
-            # Parse DSL steps
+            # Parse DSL steps using shared helpers
             dsl_content = test_case.get("dsl_content", {})
-            steps = []
-            for i, step_data in enumerate(dsl_content.get("steps", [])):
-                target = step_data.get("target", "")
-                locator_type = None
-                locator_value = None
-                if "=" in target:
-                    locator_type, locator_value = target.split("=", 1)
+            steps = _parse_dsl_steps(dsl_content)
 
-                steps.append(TestStep(
-                    index=i,
-                    action=step_data.get("action", ""),
-                    locator_type=locator_type,
-                    locator_value=locator_value,
-                    input_value=step_data.get("value"),
-                    expected_value=step_data.get("expected"),
-                    timeout=step_data.get("timeout", 10),
-                    optional=step_data.get("optional", False),
-                    metadata=step_data.get("params", {}),
-                ))
-
-            retry_policy = binding.get("retry_policy", {})
+            retry_policy = binding.get("retry_policy") or {}
             nodes[node_key] = FlowNode(
                 node_key=node_key,
                 test_case_id=test_case_id,
@@ -487,3 +469,123 @@ class FlowRunner:
         )
 
         return cls(context, flow, screenshot_callback)
+
+
+# =============================================================================
+# Shared DSL parsing helpers (must match execution.py logic)
+# =============================================================================
+
+def _parse_locator(step_data: dict) -> tuple[Optional[str], Optional[str]]:
+    """Parse locator_type and locator_value from a DSL step dict.
+
+    Supports:
+      1. selector object:  {"selector": {"strategy": "id", "value": "my_btn"}}
+      2. Explicit fields:  {"locator_type": "id", "target": "my_btn"}
+      3. Compound target:  {"target": "id=my_btn"}
+    """
+    selector = step_data.get("selector")
+    if isinstance(selector, dict):
+        strategy = selector.get("strategy")
+        value = selector.get("value")
+        if strategy and value:
+            return strategy, value
+
+    locator_type = step_data.get("locator_type")
+    target = step_data.get("target")
+
+    if locator_type and target:
+        return locator_type, target
+
+    if target and "=" in target:
+        parts = target.split("=", 1)
+        known = {
+            "id", "xpath", "accessibility_id", "class_name", "name",
+            "css", "android_uiautomator", "ios_predicate", "ios_class_chain",
+        }
+        if parts[0].strip().lower() in known:
+            return parts[0].strip(), parts[1].strip()
+
+    return locator_type, target
+
+
+def _normalize_action(step_data: dict) -> str:
+    """Normalize action name from DSL step."""
+    action = step_data.get("action") or step_data.get("type") or "unknown"
+
+    if action == "assert":
+        condition = step_data.get("condition", "exists")
+        mapping = {
+            "exists": "assert_exists",
+            "not_exists": "assert_not_exists",
+            "visible": "assert_exists",
+            "text_equals": "assert_text",
+            "text_contains": "assert_contains",
+            "enabled": "assert_exists",
+        }
+        return mapping.get(condition, "assert_exists")
+
+    if action == "scroll":
+        direction = step_data.get("direction", "down")
+        return "scroll_up" if direction == "up" else "scroll_down"
+
+    if action == "wait" and step_data.get("condition"):
+        return "wait_for_element"
+
+    return action
+
+
+def _build_step_metadata(step_data: dict) -> dict:
+    """Build metadata dict from DSL step."""
+    metadata = dict(step_data.get("params") or {})
+
+    if step_data.get("type") == "swipe" or step_data.get("action") == "swipe":
+        direction = step_data.get("direction", "up")
+        distance = step_data.get("distance", 0.5)
+        duration = step_data.get("duration", 500)
+        cx, cy = 540, 960
+        half_h = int(960 * distance)
+        half_w = int(540 * distance)
+        coord_map = {
+            "up":    {"start_x": cx, "start_y": cy + half_h, "end_x": cx, "end_y": cy - half_h},
+            "down":  {"start_x": cx, "start_y": cy - half_h, "end_x": cx, "end_y": cy + half_h},
+            "left":  {"start_x": cx + half_w, "start_y": cy, "end_x": cx - half_w, "end_y": cy},
+            "right": {"start_x": cx - half_w, "start_y": cy, "end_x": cx + half_w, "end_y": cy},
+        }
+        coords = coord_map.get(direction, coord_map["up"])
+        coords["duration"] = duration
+        metadata["coords"] = coords
+
+    if step_data.get("type") in ("wait",) or step_data.get("action") in ("wait",):
+        if "duration" not in metadata:
+            metadata["duration"] = step_data.get("duration", 1000)
+
+    if step_data.get("type") == "long_press" or step_data.get("action") == "long_press":
+        if "duration" not in metadata:
+            metadata["duration"] = step_data.get("duration", 1000)
+
+    if step_data.get("type") in ("launch_app", "close_app"):
+        if "app_id" not in metadata:
+            metadata["app_id"] = step_data.get("app_id")
+
+    return metadata
+
+
+def _parse_dsl_steps(dsl_content: dict) -> list[TestStep]:
+    """Parse DSL content into a list of TestStep objects."""
+    steps = []
+    for i, step_data in enumerate(dsl_content.get("steps", [])):
+        locator_type, locator_value = _parse_locator(step_data)
+        input_value = step_data.get("value") or step_data.get("text")
+        expected_value = step_data.get("expected")
+        steps.append(TestStep(
+            index=i,
+            action=_normalize_action(step_data),
+            locator_type=locator_type,
+            locator_value=locator_value,
+            input_value=input_value,
+            expected_value=expected_value,
+            timeout=step_data.get("timeout", 10),
+            optional=step_data.get("optional") or step_data.get("continueOnError", False),
+            metadata=_build_step_metadata(step_data),
+        ))
+    return steps

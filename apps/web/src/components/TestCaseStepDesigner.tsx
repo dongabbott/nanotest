@@ -1,5 +1,6 @@
 // filepath: d:\project\nanotest\apps\web\src\components\TestCaseStepDesigner.tsx
 import React, { useState, useCallback, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import {
   MousePointer2,
   Type,
@@ -789,64 +790,72 @@ function AddStepModal({
 }) {
   if (!isOpen) return null;
 
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
-          <div className="px-4 py-3 border-b border-gray-200">
-            <h3 className="font-semibold text-gray-900">
-              {insertIndex !== null ? `在第 ${insertIndex + 1} 步后插入` : '添加测试步骤'}
-            </h3>
-            <p className="text-sm text-gray-500">选择要添加的操作类型</p>
-          </div>
-          <div className="p-4 grid grid-cols-2 gap-2">
-            {Object.entries(ACTION_TYPES).map(([type, config]) => {
-              const Icon = config.icon;
-              const colorClasses: Record<string, { bg: string; hover: string; text: string }> = {
-                blue: { bg: 'bg-blue-100', hover: 'hover:bg-blue-50 hover:border-blue-300', text: 'text-blue-600' },
-                purple: { bg: 'bg-purple-100', hover: 'hover:bg-purple-50 hover:border-purple-300', text: 'text-purple-600' },
-                green: { bg: 'bg-green-100', hover: 'hover:bg-green-50 hover:border-green-300', text: 'text-green-600' },
-                indigo: { bg: 'bg-indigo-100', hover: 'hover:bg-indigo-50 hover:border-indigo-300', text: 'text-indigo-600' },
-                yellow: { bg: 'bg-yellow-100', hover: 'hover:bg-yellow-50 hover:border-yellow-300', text: 'text-yellow-600' },
-                red: { bg: 'bg-red-100', hover: 'hover:bg-red-50 hover:border-red-300', text: 'text-red-600' },
-                pink: { bg: 'bg-pink-100', hover: 'hover:bg-pink-50 hover:border-pink-300', text: 'text-pink-600' },
-                cyan: { bg: 'bg-cyan-100', hover: 'hover:bg-cyan-50 hover:border-cyan-300', text: 'text-cyan-600' },
-              };
-              const colors = colorClasses[config.color];
-              return (
-                <button
-                  key={type}
-                  onClick={() => { onAdd(type); onClose(); }}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg border border-gray-200 text-left transition-all ${colors.hover}`}
-                >
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colors.bg}`}>
-                    <Icon size={20} className={colors.text} />
-                  </div>
-                  <div>
-                    <div className="font-medium text-gray-900">{config.label}</div>
-                    <div className="text-xs text-gray-500">{config.description}</div>
-                  </div>
-                  {config.shortcut && (
-                    <kbd className="ml-auto text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">
-                      {config.shortcut}
-                    </kbd>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 rounded-b-xl">
-            <button
-              onClick={onClose}
-              className="w-full py-2 text-gray-600 hover:text-gray-900"
-            >
-              取消
-            </button>
-          </div>
+  return ReactDOM.createPortal(
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      onClick={(e) => { e.stopPropagation(); onClose(); }}
+      style={{ background: 'rgba(0,0,0,0.2)' }}
+    >
+      <div
+        className="bg-white rounded-xl shadow-2xl w-full max-w-lg"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b border-gray-200">
+          <h3 className="font-semibold text-gray-900">
+            {insertIndex !== null ? `在第 ${insertIndex + 1} 步后插入` : '添加测试步骤'}
+          </h3>
+          <p className="text-sm text-gray-500">选择要添加的操作类型</p>
+        </div>
+        <div className="p-4 grid grid-cols-2 gap-2">
+          {Object.entries(ACTION_TYPES).map(([type, config]) => {
+            const Icon = config.icon;
+            const colorClasses: Record<string, { bg: string; hover: string; text: string }> = {
+              blue: { bg: 'bg-blue-100', hover: 'hover:bg-blue-50 hover:border-blue-300', text: 'text-blue-600' },
+              purple: { bg: 'bg-purple-100', hover: 'hover:bg-purple-50 hover:border-purple-300', text: 'text-purple-600' },
+              green: { bg: 'bg-green-100', hover: 'hover:bg-green-50 hover:border-green-300', text: 'text-green-600' },
+              indigo: { bg: 'bg-indigo-100', hover: 'hover:bg-indigo-50 hover:border-indigo-300', text: 'text-indigo-600' },
+              yellow: { bg: 'bg-yellow-100', hover: 'hover:bg-yellow-50 hover:border-yellow-300', text: 'text-yellow-600' },
+              red: { bg: 'bg-red-100', hover: 'hover:bg-red-50 hover:border-red-300', text: 'text-red-600' },
+              pink: { bg: 'bg-pink-100', hover: 'hover:bg-pink-50 hover:border-pink-300', text: 'text-pink-600' },
+              cyan: { bg: 'bg-cyan-100', hover: 'hover:bg-cyan-50 hover:border-cyan-300', text: 'text-cyan-600' },
+            };
+            const colors = colorClasses[config.color];
+            return (
+              <button
+                key={type}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onAdd(type); onClose(); }}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg border border-gray-200 text-left transition-all ${colors.hover}`}
+              >
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colors.bg}`}>
+                  <Icon size={20} className={colors.text} />
+                </div>
+                <div>
+                  <div className="font-medium text-gray-900">{config.label}</div>
+                  <div className="text-xs text-gray-500">{config.description}</div>
+                </div>
+                {config.shortcut && (
+                  <kbd className="ml-auto text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">
+                    {config.shortcut}
+                  </kbd>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 rounded-b-xl">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onClose(); }}
+            className="w-full py-2 text-gray-600 hover:text-gray-900"
+          >
+            取消
+          </button>
         </div>
       </div>
-    </>
+    </div>,
+    document.body
   );
 }
 
@@ -869,32 +878,36 @@ export default function TestCaseStepDesigner({
   const [showAddModal, setShowAddModal] = useState(false);
   const [insertAfterIndex, setInsertAfterIndex] = useState<number | null>(null);
   const [clipboard, setClipboard] = useState<Action[]>([]);
-  const [history, setHistory] = useState<Action[][]>([dsl.steps]);
-  const [historyIndex, setHistoryIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // 历史记录
+  // ---- history via refs to avoid stale-closure bugs ----
+  const historyRef = useRef<Action[][]>([dsl.steps]);
+  const historyIndexRef = useRef(0);
+  const [, forceUpdate] = useState(0);           // trigger re-render after undo/redo
+
   const pushHistory = useCallback((steps: Action[]) => {
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(steps);
-    if (newHistory.length > 50) newHistory.shift();
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  }, [history, historyIndex]);
+    const h = historyRef.current.slice(0, historyIndexRef.current + 1);
+    h.push(steps);
+    if (h.length > 50) h.shift();
+    historyRef.current = h;
+    historyIndexRef.current = h.length - 1;
+  }, []);
 
   const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      setHistoryIndex(historyIndex - 1);
-      onChange({ ...dsl, steps: history[historyIndex - 1] });
+    if (historyIndexRef.current > 0) {
+      historyIndexRef.current -= 1;
+      onChange({ ...dsl, steps: historyRef.current[historyIndexRef.current] });
+      forceUpdate((n) => n + 1);
     }
-  }, [historyIndex, history, dsl, onChange]);
+  }, [dsl, onChange]);
 
   const redo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      setHistoryIndex(historyIndex + 1);
-      onChange({ ...dsl, steps: history[historyIndex + 1] });
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      historyIndexRef.current += 1;
+      onChange({ ...dsl, steps: historyRef.current[historyIndexRef.current] });
+      forceUpdate((n) => n + 1);
     }
-  }, [historyIndex, history, dsl, onChange]);
+  }, [dsl, onChange]);
 
   // 步骤操作
   const handleToggleStep = (index: number) => {
@@ -1040,13 +1053,16 @@ export default function TestCaseStepDesigner({
     pushHistory(allSteps);
   };
 
-  // 快捷键
+  // 快捷键 — scoped to container, safe guard for all editable elements
   React.useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 检查是否在输入框内
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isEditable =
+        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
+        (e.target as HTMLElement)?.isContentEditable;
 
       if (e.ctrlKey || e.metaKey) {
         if (e.key === 'z' && !e.shiftKey) {
@@ -1055,35 +1071,37 @@ export default function TestCaseStepDesigner({
         } else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
           e.preventDefault();
           redo();
-        } else if (e.key === 'c') {
+        } else if (e.key === 'c' && !isEditable) {
           e.preventDefault();
           handleCopySelected();
-        } else if (e.key === 'v') {
+        } else if (e.key === 'v' && !isEditable) {
           e.preventDefault();
           handlePaste();
-        } else if (e.key === 'a') {
+        } else if (e.key === 'a' && !isEditable) {
           e.preventDefault();
           handleSelectAll();
         }
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedSteps.size > 0) {
-          e.preventDefault();
-          handleDeleteSelected();
+      } else if (!isEditable) {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          if (selectedSteps.size > 0) {
+            e.preventDefault();
+            handleDeleteSelected();
+          }
         }
-      }
 
-      // 快捷添加步骤
-      Object.entries(ACTION_TYPES).forEach(([type, config]) => {
-        if (config.shortcut && e.key.toUpperCase() === config.shortcut && !e.ctrlKey && !e.metaKey && !e.altKey) {
-          e.preventDefault();
-          handleAddStep(type);
-        }
-      });
+        // 快捷添加步骤 — only when NOT in an editable field
+        Object.entries(ACTION_TYPES).forEach(([type, config]) => {
+          if (config.shortcut && e.key.toUpperCase() === config.shortcut && !e.altKey) {
+            e.preventDefault();
+            handleAddStep(type);
+          }
+        });
+      }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, handleCopySelected, handlePaste, handleSelectAll, handleDeleteSelected, selectedSteps, handleAddStep]);
+    container.addEventListener('keydown', handleKeyDown);
+    return () => container.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo, selectedSteps, handleAddStep]);
 
   // 展开/折叠所有
   const handleExpandAll = () => {
@@ -1095,14 +1113,14 @@ export default function TestCaseStepDesigner({
   };
 
   return (
-    <div ref={containerRef} className="flex flex-col h-full">
+    <div ref={containerRef} tabIndex={-1} className="flex flex-col h-full outline-none">
       {/* 工具栏 */}
       {!compact && (
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-2">
             <button
               onClick={undo}
-              disabled={historyIndex <= 0}
+              disabled={historyIndexRef.current <= 0}
               className="p-1.5 hover:bg-gray-100 rounded text-gray-500 disabled:opacity-30"
               title="撤销 (Ctrl+Z)"
             >
@@ -1110,7 +1128,7 @@ export default function TestCaseStepDesigner({
             </button>
             <button
               onClick={redo}
-              disabled={historyIndex >= history.length - 1}
+              disabled={historyIndexRef.current >= historyRef.current.length - 1}
               className="p-1.5 hover:bg-gray-100 rounded text-gray-500 disabled:opacity-30"
               title="重做 (Ctrl+Y)"
             >

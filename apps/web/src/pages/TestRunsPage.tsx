@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, Clock, CheckCircle, XCircle, Loader2, X, GitBranch } from 'lucide-react';
-import { testRunsApi, testFlowsApi } from '../services/api';
+import { Play, Clock, CheckCircle, XCircle, Loader2, X, GitBranch, Smartphone } from 'lucide-react';
+import { testRunsApi, testFlowsApi, devicesApi } from '../services/api';
 
 // 触发运行弹窗
 function TriggerRunModal({
@@ -17,6 +17,7 @@ function TriggerRunModal({
   preselectedFlowId?: string;
 }) {
   const [selectedFlowId, setSelectedFlowId] = useState(preselectedFlowId || '');
+  const [selectedSessionId, setSelectedSessionId] = useState('');
   const [error, setError] = useState('');
 
   const queryClient = useQueryClient();
@@ -27,10 +28,23 @@ function TriggerRunModal({
     enabled: isOpen,
   });
 
+  // 获取活跃的 Appium Sessions
+  const { data: sessionsData } = useQuery({
+    queryKey: ['activeSessions'],
+    queryFn: () => devicesApi.listSessions(),
+    enabled: isOpen,
+  });
+
   const flows = flowsData?.data?.items || [];
+  const sessions = (sessionsData?.data?.sessions || []).filter(
+    (s: any) => s.status === 'active'
+  );
 
   const triggerMutation = useMutation({
-    mutationFn: (data: { flowId: string }) => testRunsApi.trigger(data.flowId),
+    mutationFn: (data: { flowId: string; sessionId?: string }) =>
+      testRunsApi.trigger(data.flowId, {
+        sessionId: data.sessionId || undefined,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['testRuns', projectId] });
       onClose();
@@ -43,6 +57,7 @@ function TriggerRunModal({
 
   const resetForm = () => {
     setSelectedFlowId('');
+    setSelectedSessionId('');
     setError('');
   };
 
@@ -55,6 +70,7 @@ function TriggerRunModal({
 
     triggerMutation.mutate({
       flowId: selectedFlowId,
+      sessionId: selectedSessionId || undefined,
     });
   };
 
@@ -96,6 +112,41 @@ function TriggerRunModal({
                   </option>
                 ))}
               </select>
+            )}
+          </div>
+
+          {/* Appium Session 选择（可选） */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <span className="flex items-center gap-1.5">
+                <Smartphone size={14} />
+                关联设备会话
+                <span className="text-xs text-gray-400 font-normal">（可选，不选则模拟执行）</span>
+              </span>
+            </label>
+            {sessions.length === 0 ? (
+              <div className="text-sm text-gray-500 p-3 bg-gray-50 rounded-lg text-center">
+                暂无活跃会话，请先在「设备管理 → 会话」中创建
+              </div>
+            ) : (
+              <select
+                value={selectedSessionId}
+                onChange={(e) => setSelectedSessionId(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">-- 不关联设备（模拟执行） --</option>
+                {sessions.map((session: any) => (
+                  <option key={session.session_id} value={session.session_id}>
+                    {session.app_name || session.package_name || '未知应用'} · {session.device_name || session.device_udid} ({session.platform})
+                  </option>
+                ))}
+              </select>
+            )}
+            {selectedSessionId && (
+              <p className="mt-1.5 text-xs text-green-600 flex items-center gap-1">
+                <CheckCircle size={12} />
+                将使用真机执行测试
+              </p>
             )}
           </div>
 
@@ -150,6 +201,7 @@ export default function TestRunsPage() {
   const statusConfig: Record<string, { icon: any; color: string; bg: string; label: string }> = {
     queued: { icon: Clock, color: 'text-gray-600', bg: 'bg-gray-100', label: '排队中' },
     running: { icon: Loader2, color: 'text-blue-600', bg: 'bg-blue-100', label: '运行中' },
+    passed: { icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100', label: '成功' },
     success: { icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100', label: '成功' },
     failed: { icon: XCircle, color: 'text-red-600', bg: 'bg-red-100', label: '失败' },
     partial: { icon: CheckCircle, color: 'text-yellow-600', bg: 'bg-yellow-100', label: '部分通过' },
@@ -215,7 +267,7 @@ export default function TestRunsPage() {
                   <tr key={run.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4">
                       <Link
-                        to={`runs/${run.id}`}
+                        to={`${run.id}`}
                         className="font-medium text-blue-600 hover:text-blue-800"
                       >
                         #{run.run_no}

@@ -85,11 +85,15 @@ class AppiumClient:
             class AttachedWebDriver(AppiumWebDriver):
                 def __init__(self, command_executor: str, session_id: str):
                     self._attached_session_id = session_id
-                    super().__init__(command_executor=command_executor, options=AppiumOptions())
+                    super().__init__(
+                        command_executor=command_executor,
+                        options=AppiumOptions(),
+                        direct_connection=False,
+                    )
 
-                def start_session(self, capabilities, browser_profile: Optional[str] = None) -> None:
+                def start_session(self, capabilities, browser_profile=None) -> None:
                     self.session_id = self._attached_session_id
-                    self.caps = {}
+                    self.caps = {"attached": True}
                     self.w3c = True
 
             self._driver = AttachedWebDriver(self.server_url, self.existing_session_id)

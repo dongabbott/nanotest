@@ -63,19 +63,29 @@ def _parse_locator(step_data: dict) -> tuple[Optional[str], Optional[str]]:
     """Parse locator_type and locator_value from a DSL step dict.
 
     Supports multiple formats:
-      1. Explicit fields: {"locator_type": "id", "target": "my_btn"}
-      2. Compound target:  {"target": "id=my_btn"}
-      3. target only:      {"target": "my_btn"} → locator_type=None
+      1. selector object:  {"selector": {"strategy": "id", "value": "my_btn"}}
+      2. Explicit fields:  {"locator_type": "id", "target": "my_btn"}
+      3. Compound target:  {"target": "id=my_btn"}
+      4. target only:      {"target": "my_btn"} → locator_type=None
     """
+    # Format 1: selector object (from frontend TestCaseStepDesigner)
+    selector = step_data.get("selector")
+    if isinstance(selector, dict):
+        strategy = selector.get("strategy")
+        value = selector.get("value")
+        if strategy and value:
+            return strategy, value
+
+    # Format 2: explicit locator_type + target
     locator_type = step_data.get("locator_type")
     target = step_data.get("target")
 
     if locator_type and target:
         return locator_type, target
 
+    # Format 3: compound target e.g. "id=my_btn"
     if target and "=" in target:
         parts = target.split("=", 1)
-        # Only treat as compound if left side looks like a known locator strategy
         known = {
             "id", "xpath", "accessibility_id", "class_name", "name",
             "css", "android_uiautomator", "ios_predicate", "ios_class_chain",
@@ -84,6 +94,83 @@ def _parse_locator(step_data: dict) -> tuple[Optional[str], Optional[str]]:
             return parts[0].strip(), parts[1].strip()
 
     return locator_type, target
+
+
+def _normalize_action(step_data: dict) -> str:
+    """Normalize action name from DSL step.
+
+    The frontend designer uses 'type' field for action name (e.g. 'tap', 'swipe'),
+    while the backend expects 'action'. Also maps frontend action names to runner
+    action names where they differ.
+    """
+    action = step_data.get("action") or step_data.get("type") or "unknown"
+
+    # Map frontend assert conditions to runner actions
+    if action == "assert":
+        condition = step_data.get("condition", "exists")
+        mapping = {
+            "exists": "assert_exists",
+            "not_exists": "assert_not_exists",
+            "visible": "assert_exists",
+            "text_equals": "assert_text",
+            "text_contains": "assert_contains",
+            "enabled": "assert_exists",
+        }
+        return mapping.get(condition, "assert_exists")
+
+    # Map frontend 'scroll' with direction to runner actions
+    if action == "scroll":
+        direction = step_data.get("direction", "down")
+        return "scroll_up" if direction == "up" else "scroll_down"
+
+    # Map 'wait' with condition to 'wait_for_element'
+    if action == "wait" and step_data.get("condition"):
+        return "wait_for_element"
+
+    return action
+
+
+def _build_step_metadata(step_data: dict) -> dict:
+    """Build metadata dict from DSL step, merging explicit params with
+    top-level fields that the runner expects in metadata."""
+    metadata = dict(step_data.get("params") or {})
+
+    # Swipe: runner expects metadata.coords
+    if step_data.get("type") == "swipe" or step_data.get("action") == "swipe":
+        direction = step_data.get("direction", "up")
+        distance = step_data.get("distance", 0.5)
+        duration = step_data.get("duration", 500)
+        # Convert direction + distance into absolute coords
+        # Using a 1080x1920 reference; actual coords are relative
+        cx, cy = 540, 960
+        half_h = int(960 * distance)
+        half_w = int(540 * distance)
+        coord_map = {
+            "up":    {"start_x": cx, "start_y": cy + half_h, "end_x": cx, "end_y": cy - half_h},
+            "down":  {"start_x": cx, "start_y": cy - half_h, "end_x": cx, "end_y": cy + half_h},
+            "left":  {"start_x": cx + half_w, "start_y": cy, "end_x": cx - half_w, "end_y": cy},
+            "right": {"start_x": cx - half_w, "start_y": cy, "end_x": cx + half_w, "end_y": cy},
+        }
+        coords = coord_map.get(direction, coord_map["up"])
+        coords["duration"] = duration
+        metadata["coords"] = coords
+
+    # Wait: runner expects metadata.duration (ms)
+    if step_data.get("type") in ("wait",) or step_data.get("action") in ("wait",):
+        if "duration" not in metadata:
+            metadata["duration"] = step_data.get("duration", 1000)
+
+    # Long press: runner expects metadata.duration
+    if step_data.get("type") == "long_press" or step_data.get("action") == "long_press":
+        if "duration" not in metadata:
+            metadata["duration"] = step_data.get("duration", 1000)
+
+    # Launch/close app: runner expects metadata.app_id
+    if step_data.get("type") in ("launch_app", "close_app"):
+        if "app_id" not in metadata:
+            metadata["app_id"] = step_data.get("app_id")
+
+    return metadata
 
 
 # =============================================================================
@@ -222,18 +309,27 @@ def _build_execution_context(
     device: Optional[Any], 
     device_config: Optional[dict]
 ) -> dict[str, Any]:
-    """Build execution context for the runner."""
+    """Build execution context for the runner.
+
+    Priority (highest → lowest):
+      1. Fields stored in run.env_config (set by the API from Appium session data)
+      2. Device record from DB
+      3. Explicit device_config override passed to the task
+      4. Defaults (mock context)
+    """
+    env = run.env_config or {}
+
     context = {
         "run_id": str(run.id),
         "project_id": str(run.project_id),
         "flow_id": str(run.flow_id),
-        "variables": run.env_config.get("variables", {}),
-        "use_real_runner": run.env_config.get("use_real_runner", False),
-        "screenshot_on_failure": run.env_config.get("screenshot_on_failure", True),
-        "screenshot_on_step": run.env_config.get("screenshot_on_step", False),
+        "variables": env.get("variables", {}),
+        "use_real_runner": env.get("use_real_runner", False),
+        "screenshot_on_failure": env.get("screenshot_on_failure", True),
+        "screenshot_on_step": env.get("screenshot_on_step", False),
     }
 
-    # Add device info
+    # Add device info from DB device record
     if device:
         context.update({
             "platform": device.platform,
@@ -254,16 +350,26 @@ def _build_execution_context(
             "platform_version": "13",
         })
 
-    if run.env_config.get("platform"):
-        context["platform"] = run.env_config["platform"]
-    if run.env_config.get("device_udid"):
-        context["device_udid"] = run.env_config["device_udid"]
-    if run.env_config.get("platform_version"):
-        context["platform_version"] = run.env_config["platform_version"]
-    if run.env_config.get("appium_server_url"):
-        context["appium_server_url"] = run.env_config["appium_server_url"]
-    if run.env_config.get("appium_session_id"):
-        context["appium_session_id"] = run.env_config["appium_session_id"]
+    # env_config fields (written by create_flow_run from Appium session)
+    # always override because they come from the actual session the user chose.
+    _env_keys = [
+        "platform",
+        "device_udid",
+        "platform_version",
+        "appium_server_url",
+        "appium_session_id",
+        "app_package",
+        "app_activity",
+        "bundle_id",
+        "app_path",
+    ]
+    for key in _env_keys:
+        val = env.get(key)
+        if val:
+            context[key] = val
+
+    # If an appium_session_id is present, force real runner
+    if context.get("appium_session_id"):
         context["use_real_runner"] = True
 
     return context
@@ -273,23 +379,9 @@ def _build_test_steps_from_dsl(dsl_content: dict) -> list:
     """Build TestStep list from DSL content dict using consistent locator parsing."""
     import sys, os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "worker"))
-    from runners.base import TestStep
+    from runners.flow_runner import _parse_dsl_steps
 
-    steps = []
-    for i, step_data in enumerate(dsl_content.get("steps", [])):
-        locator_type, locator_value = _parse_locator(step_data)
-        steps.append(TestStep(
-            index=i,
-            action=step_data["action"],
-            locator_type=locator_type,
-            locator_value=locator_value,
-            input_value=step_data.get("value"),
-            expected_value=step_data.get("expected"),
-            timeout=step_data.get("timeout", 10),
-            optional=step_data.get("optional", False),
-            metadata=step_data.get("params", {}),
-        ))
-    return steps
+    return _parse_dsl_steps(dsl_content)
 
 
 async def _execute_flow_with_dag(
@@ -591,13 +683,14 @@ async def _execute_node_with_appium(
     dsl_content = test_case.dsl_content
     steps = _build_test_steps_from_dsl(dsl_content)
 
+    retry_policy = binding.retry_policy or {}
     node = TestNode(
         node_key=binding.node_key,
         test_case_id=str(binding.test_case_id),
         steps=steps,
-        retry_on_failure=binding.retry_policy.get("enabled", False),
-        max_retries=binding.retry_policy.get("max_retries", 0),
-        timeout=binding.timeout_sec,
+        retry_on_failure=retry_policy.get("enabled", False),
+        max_retries=retry_policy.get("max_retries", 0),
+        timeout=binding.timeout_sec or 300,
     )
 
     # Execute with runner

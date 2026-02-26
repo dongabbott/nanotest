@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.v1.auth import get_current_active_user
 from app.core.database import get_db
@@ -34,6 +35,7 @@ from app.schemas.schemas import (
     TestPlanListResponse,
     TestPlanResponse,
     TestPlanUpdate,
+    TestRunDetailResponse,
     TestRunListResponse,
     TestRunNodeResponse,
     TestRunResponse,
@@ -94,8 +96,8 @@ async def create_test_plan(
     # Verify flow exists
     result = await db.execute(
         select(TestFlow).where(
-            TestFlow.id == payload.flow_id,
-            TestFlow.project_id == project_id,
+            TestFlow.id == str(payload.flow_id),
+            TestFlow.project_id == str(project_id),
             TestFlow.deleted_at.is_(None),
         )
     )
@@ -132,7 +134,7 @@ async def list_test_plans(
     await verify_project_access(project_id, current_user, db)
 
     base_query = select(TestPlan).where(
-        TestPlan.project_id == project_id,
+        TestPlan.project_id == str(project_id),
         TestPlan.deleted_at.is_(None),
     )
 
@@ -382,7 +384,7 @@ async def list_test_runs(
     """List test runs for a project."""
     await verify_project_access(project_id, current_user, db)
 
-    base_query = select(TestRun).where(TestRun.project_id == project_id)
+    base_query = select(TestRun).where(TestRun.project_id == str(project_id))
 
     if status_filter:
         base_query = base_query.where(TestRun.status == status_filter)
@@ -432,6 +434,61 @@ async def get_test_run(
         )
 
     return TestRunResponse.model_validate(run)
+
+
+@router.get("/runs/{run_id}/detail", response_model=TestRunDetailResponse)
+async def get_test_run_detail(
+    run_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a test run with all nodes and steps in a single response."""
+    result = await db.execute(
+        select(TestRun)
+        .join(Project)
+        .options(
+            selectinload(TestRun.nodes).selectinload(TestRunNode.step_results),
+        )
+        .where(
+            TestRun.id == str(run_id),
+            Project.tenant_id == current_user.tenant_id,
+        )
+    )
+    run = result.scalar_one_or_none()
+
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Test run not found",
+        )
+
+    # Build nodes with steps
+    nodes_response = []
+    for node in sorted(run.nodes, key=lambda n: n.created_at):
+        steps = [
+            TestStepResultResponse.model_validate(s)
+            for s in sorted(node.step_results, key=lambda s: s.step_index)
+        ]
+        node_resp = TestRunNodeResponse.model_validate(node)
+        node_resp.steps = steps
+        nodes_response.append(node_resp)
+
+    return TestRunDetailResponse(
+        id=run.id,
+        project_id=run.project_id,
+        plan_id=run.plan_id,
+        flow_id=run.flow_id,
+        run_no=run.run_no,
+        status=run.status,
+        triggered_by=run.triggered_by,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        summary=run.summary or {},
+        env_config=run.env_config or {},
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        nodes=nodes_response,
+    )
 
 
 @router.post("/runs/{run_id}/cancel", response_model=TestRunResponse)
@@ -496,11 +553,22 @@ async def get_run_nodes(
 
     result = await db.execute(
         select(TestRunNode)
-        .where(TestRunNode.test_run_id == run_id)
+        .options(selectinload(TestRunNode.step_results))
+        .where(TestRunNode.test_run_id == str(run_id))
         .order_by(TestRunNode.created_at)
     )
     nodes = result.scalars().all()
-    return [TestRunNodeResponse.model_validate(n) for n in nodes]
+
+    nodes_response = []
+    for node in nodes:
+        steps = [
+            TestStepResultResponse.model_validate(s)
+            for s in sorted(node.step_results, key=lambda s: s.step_index)
+        ]
+        node_resp = TestRunNodeResponse.model_validate(node)
+        node_resp.steps = steps
+        nodes_response.append(node_resp)
+    return nodes_response
 
 
 @router.get("/runs/{run_id}/nodes/{node_id}/steps", response_model=list[TestStepResultResponse])

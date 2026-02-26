@@ -98,6 +98,7 @@ export const testRunsApi = {
       params: { page, page_size: pageSize },
     }),
   get: (runId: string) => apiClient.get(`/api/v1/runs/${runId}`),
+  getDetail: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/detail`),
   getNodes: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/nodes`),
   getSteps: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/steps`),
   trigger: (
