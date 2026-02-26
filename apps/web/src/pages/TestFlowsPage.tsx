@@ -99,9 +99,47 @@ function FlowDesignerPage({
   const createMutation = useMutation({
     mutationFn: (data: { name: string; graph_json: object; description?: string }) =>
       testFlowsApi.create(projectId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['testFlows', projectId] });
-      onBack();
+    onSuccess: async (res: any) => {
+      try {
+        const createdFlowId = res?.data?.id;
+        if (createdFlowId && flowDefinition) {
+          const nodes = flowDefinition.nodes || [];
+          const desired = nodes
+            .filter((n) => n.type === 'test_case')
+            .map((n) => ({
+              nodeKey: n.id,
+              testCaseId: n.data?.testCaseId as string | undefined,
+              timeoutSec: n.data?.timeout as number | undefined,
+            }))
+            .filter((x) => !!x.nodeKey && !!x.testCaseId);
+
+          const desiredKeys = new Set(desired.map((d) => d.nodeKey));
+          const existingRes = await testFlowsApi.listBindings(createdFlowId);
+          const existing = existingRes?.data || [];
+
+          await Promise.all(
+            desired.map((d) =>
+              testFlowsApi.upsertBinding(createdFlowId, {
+                node_key: d.nodeKey,
+                test_case_id: d.testCaseId!,
+                timeout_sec: typeof d.timeoutSec === 'number' ? d.timeoutSec : undefined,
+              })
+            )
+          );
+
+          await Promise.all(
+            existing
+              .filter((b: any) => !desiredKeys.has(b.node_key))
+              .map((b: any) => testFlowsApi.deleteBinding(createdFlowId, b.node_key))
+          );
+        }
+
+        queryClient.invalidateQueries({ queryKey: ['testFlows', projectId] });
+        onBack();
+      } catch (err: any) {
+        setError(err.response?.data?.detail || '保存绑定失败');
+        setIsSaving(false);
+      }
     },
     onError: (err: any) => {
       setError(err.response?.data?.detail || '创建流程失败');
@@ -113,10 +151,47 @@ function FlowDesignerPage({
   const updateMutation = useMutation({
     mutationFn: (data: { name: string; graph_json: object; description?: string }) =>
       testFlowsApi.update(flowId!, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['testFlows', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['testFlow', flowId] });
-      onBack();
+    onSuccess: async () => {
+      try {
+        if (flowId && flowDefinition) {
+          const nodes = flowDefinition.nodes || [];
+          const desired = nodes
+            .filter((n) => n.type === 'test_case')
+            .map((n) => ({
+              nodeKey: n.id,
+              testCaseId: n.data?.testCaseId as string | undefined,
+              timeoutSec: n.data?.timeout as number | undefined,
+            }))
+            .filter((x) => !!x.nodeKey && !!x.testCaseId);
+
+          const desiredKeys = new Set(desired.map((d) => d.nodeKey));
+          const existingRes = await testFlowsApi.listBindings(flowId);
+          const existing = existingRes?.data || [];
+
+          await Promise.all(
+            desired.map((d) =>
+              testFlowsApi.upsertBinding(flowId, {
+                node_key: d.nodeKey,
+                test_case_id: d.testCaseId!,
+                timeout_sec: typeof d.timeoutSec === 'number' ? d.timeoutSec : undefined,
+              })
+            )
+          );
+
+          await Promise.all(
+            existing
+              .filter((b: any) => !desiredKeys.has(b.node_key))
+              .map((b: any) => testFlowsApi.deleteBinding(flowId, b.node_key))
+          );
+        }
+
+        queryClient.invalidateQueries({ queryKey: ['testFlows', projectId] });
+        queryClient.invalidateQueries({ queryKey: ['testFlow', flowId] });
+        onBack();
+      } catch (err: any) {
+        setError(err.response?.data?.detail || '保存绑定失败');
+        setIsSaving(false);
+      }
     },
     onError: (err: any) => {
       setError(err.response?.data?.detail || '更新流程失败');

@@ -93,7 +93,7 @@ async def websocket_run_updates(
     await manager.connect(websocket, channel)
 
     # Create Redis subscriber
-    redis_client = redis.from_url(settings.REDIS_URL)
+    redis_client = redis.from_url(settings.redis_url)
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(channel)
 
@@ -182,7 +182,7 @@ async def websocket_project_events(
     channel = f"project:{project_id}"
     await manager.connect(websocket, channel)
 
-    redis_client = redis.from_url(settings.REDIS_URL)
+    redis_client = redis.from_url(settings.redis_url)
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(channel)
 
@@ -230,7 +230,7 @@ async def websocket_dashboard(
     channel = "dashboard:global"
     await manager.connect(websocket, channel)
 
-    redis_client = redis.from_url(settings.REDIS_URL)
+    redis_client = redis.from_url(settings.redis_url)
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(channel)
 

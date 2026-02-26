@@ -1,4 +1,3 @@
-import React from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { 
@@ -149,7 +148,7 @@ export default function RunDetailPage() {
               暂无测试步骤记录
             </div>
           ) : (
-            (run.nodes || []).map((node: any, index: number) => (
+            (run.nodes || []).map((node: any) => (
               <div key={node.id} className="px-6 py-4">
                 <div className="flex items-start gap-4">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${

@@ -1,5 +1,5 @@
 // filepath: d:\project\nanotest\apps\web\src\pages\TestCaseEditorPage.tsx
-import React, { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Editor, { OnMount } from '@monaco-editor/react';
@@ -9,10 +9,8 @@ import {
   Sparkles,
   ChevronLeft,
   AlertCircle,
-  CheckCircle,
   Loader2,
   FileCode,
-  Settings,
   Eye,
   Crosshair,
 } from 'lucide-react';
@@ -106,19 +104,24 @@ export default function TestCaseEditorPage() {
   const isNewCase = caseId === 'new';
 
   // 获取测试用例数据
-  const { data: testCase, isLoading } = useQuery({
+  const { data: testCaseData, isLoading } = useQuery({
     queryKey: ['testCase', caseId],
     queryFn: () => testCasesApi.get(caseId!),
     enabled: !isNewCase && !!caseId,
-    onSuccess: (data: any) => {
-      setDslContent(data.data?.dsl_content || '');
-      setCaseName(data.data?.name || '');
-    },
   });
+
+  // Populate state when test case data loads (replaces removed onSuccess)
+  useEffect(() => {
+    if (testCaseData) {
+      const d = testCaseData.data;
+      setDslContent(d?.dsl_content || '');
+      setCaseName(d?.name || '');
+    }
+  }, [testCaseData]);
 
   // 保存测试用例
   const saveMutation = useMutation({
-    mutationFn: (data: { name: string; dsl_content: string }) => {
+    mutationFn: (data: { name: string; dsl_content: any }) => {
       if (isNewCase) {
         return testCasesApi.create(projectId!, data);
       }
@@ -229,7 +232,7 @@ export default function TestCaseEditorPage() {
 
     // 自动补全
     monaco.languages.registerCompletionItemProvider('nanotest-dsl', {
-      provideCompletionItems: (model, position) => {
+      provideCompletionItems: (model: any, position: any) => {
         const word = model.getWordUntilPosition(position);
         const range = {
           startLineNumber: position.lineNumber,
@@ -374,10 +377,13 @@ export default function TestCaseEditorPage() {
       setValidationErrors(errors);
       return;
     }
-    
+
+    // Convert YAML-like DSL text to structured JSON for backend
+    const dslPayload = buildDSLPayload(caseName || 'Untitled Test Case', dslContent);
+
     saveMutation.mutate({
       name: caseName || 'Untitled Test Case',
-      dsl_content: dslContent,
+      dsl_content: dslPayload,
     });
   };
 
@@ -561,8 +567,8 @@ export default function TestCaseEditorPage() {
         {showInspector && (
           <div className="w-96 border-l border-gray-200 flex flex-col">
             <ElementInspector
-              onElementSelect={(locator) => {
-                const locatorText = `locator:\n      type: ${locator.strategy.replace(' ', '_')}\n      value: "${locator.value}"`;
+              onSelectElement={(selector) => {
+                const locatorText = `locator:\n      type: ${selector.strategy.replace(' ', '_')}\n      value: "${selector.value}"`;
                 if (editorRef.current) {
                   const editor = editorRef.current;
                   const position = editor.getPosition();
@@ -628,16 +634,59 @@ function StepPreview({ dslContent }: { dslContent: string }) {
   );
 }
 
+// Build structured DSL payload from YAML-like text for backend API
+function buildDSLPayload(name: string, content: string): {
+  name: string;
+  steps: Array<{
+    action: string;
+    target?: string;
+    locator_type?: string;
+    value?: string;
+    expected?: string;
+    params?: Record<string, any>;
+    timeout?: number;
+    optional?: boolean;
+  }>;
+  variables?: Record<string, any>;
+} {
+  const steps = parseDSLSteps(content);
+  return {
+    name,
+    steps: steps.map((step) => {
+      const result: any = { action: step.action };
+      if (step.locator) {
+        // Store as compound target "type=value" for backend parsing
+        result.target = `${step.locator.type}=${step.locator.value}`;
+        result.locator_type = step.locator.type;
+      }
+      if (step.text !== undefined) {
+        result.value = step.text;
+      }
+      if (step.timeout !== undefined) {
+        result.timeout = step.timeout;
+      }
+      if (step.packageName) {
+        result.params = { ...result.params, app_id: step.packageName };
+      }
+      return result;
+    }),
+  };
+}
+
 // 简单的 DSL 解析器
 function parseDSLSteps(content: string): Array<{
   action: string;
   locator?: { type: string; value: string };
   text?: string;
+  timeout?: number;
+  packageName?: string;
 }> {
   const steps: Array<{
     action: string;
     locator?: { type: string; value: string };
     text?: string;
+    timeout?: number;
+    packageName?: string;
   }> = [];
 
   const lines = content.split('\n');
@@ -664,6 +713,16 @@ function parseDSLSteps(content: string): Array<{
       currentStep.locator.value = trimmed.replace('value:', '').trim().replace(/"/g, '');
     } else if (trimmed.startsWith('text:') && currentStep) {
       currentStep.text = trimmed.replace('text:', '').trim().replace(/"/g, '');
+      inLocator = false;
+    } else if (trimmed.startsWith('timeout:') && currentStep) {
+      const timeoutStr = trimmed.replace('timeout:', '').trim();
+      const match = timeoutStr.match(/^(\d+)/);
+      if (match) {
+        currentStep.timeout = parseInt(match[1], 10);
+      }
+      inLocator = false;
+    } else if (trimmed.startsWith('package:') && currentStep) {
+      currentStep.packageName = trimmed.replace('package:', '').trim();
       inLocator = false;
     }
   }

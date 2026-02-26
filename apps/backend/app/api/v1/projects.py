@@ -48,7 +48,7 @@ async def list_projects(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=200),
 ):
     """List all projects for the current tenant."""
     count_query = select(func.count(Project.id)).where(

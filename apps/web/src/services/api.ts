@@ -78,6 +78,17 @@ export const testFlowsApi = {
   update: (flowId: string, data: Partial<{ name: string; graph_json: object }>) =>
     apiClient.put(`/api/v1/flows/${flowId}`, data),
   compile: (flowId: string) => apiClient.post(`/api/v1/flows/${flowId}/compile`),
+  listBindings: (flowId: string) =>
+    apiClient.get(`/api/v1/flows/${flowId}/bindings`),
+  upsertBinding: (flowId: string, data: {
+    node_key: string;
+    test_case_id: string;
+    retry_policy?: Record<string, unknown>;
+    timeout_sec?: number;
+  }) =>
+    apiClient.post(`/api/v1/flows/${flowId}/bindings`, data),
+  deleteBinding: (flowId: string, nodeKey: string) =>
+    apiClient.delete(`/api/v1/flows/${flowId}/bindings/${encodeURIComponent(nodeKey)}`),
 };
 
 // Test Runs API
@@ -89,8 +100,14 @@ export const testRunsApi = {
   get: (runId: string) => apiClient.get(`/api/v1/runs/${runId}`),
   getNodes: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/nodes`),
   getSteps: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/steps`),
-  trigger: (flowId: string, env?: object) =>
-    apiClient.post(`/api/v1/flows/${flowId}/runs`, { env }),
+  trigger: (
+    flowId: string,
+    options?: { planId?: string; sessionId?: string }
+  ) =>
+    apiClient.post(`/api/v1/flows/${flowId}/runs`, {
+      planId: options?.planId,
+      sessionId: options?.sessionId,
+    }),
   cancel: (runId: string) => apiClient.post(`/api/v1/runs/${runId}/cancel`),
   aiAnalyze: (runId: string) => apiClient.post(`/api/v1/runs/${runId}/ai-analyze`),
   getAiSummary: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/ai-summary`),
@@ -109,17 +126,6 @@ export const comparisonsApi = {
 
 // Devices API
 export const devicesApi = {
-  // 设备池 - 全租户级别
-  listPools: (_projectId?: string) =>
-    apiClient.get('/api/v1/device-pools'),
-  createPool: (_projectId: string, data: { name: string; provider?: string; description?: string }) =>
-    apiClient.post('/api/v1/device-pools', data),
-  getPool: (poolId: string) =>
-    apiClient.get(`/api/v1/device-pools/${poolId}`),
-  updatePool: (poolId: string, data: Partial<{ name: string; description: string }>) =>
-    apiClient.patch(`/api/v1/device-pools/${poolId}`, data),
-  deletePool: (poolId: string) =>
-    apiClient.delete(`/api/v1/device-pools/${poolId}`),
   // 设备
   listDevices: (_projectId?: string, poolId?: string) =>
     apiClient.get('/api/v1/devices', { params: { pool_id: poolId } }),
@@ -127,16 +133,7 @@ export const devicesApi = {
     apiClient.get(`/api/v1/devices/${deviceId}`),
   updateDevice: (deviceId: string, data: Partial<{ status: string; name: string }>) =>
     apiClient.patch(`/api/v1/devices/${deviceId}`, data),
-  // 设备池设备管理
-  listPoolDevices: (poolId: string) =>
-    apiClient.get(`/api/v1/device-pools/${poolId}/devices`),
-  addDeviceToPool: (poolId: string, deviceId: string) =>
-    apiClient.post(`/api/v1/device-pools/${poolId}/devices/${deviceId}`),
-  removeDeviceFromPool: (poolId: string, deviceId: string) =>
-    apiClient.delete(`/api/v1/device-pools/${poolId}/devices/${deviceId}`),
-  acquireDevice: (poolId: string) =>
-    apiClient.post(`/api/v1/device-pools/${poolId}/acquire`),
-  
+
   // 本地设备扫描
   scanLocalDevices: () =>
     apiClient.post('/api/v1/devices/scan-local'),
@@ -241,7 +238,7 @@ export const plansApi = {
   delete: (planId: string) =>
     apiClient.delete(`/api/v1/plans/${planId}`),
   trigger: (planId: string) =>
-    apiClient.post(`/api/v1/plans/${planId}/runs`, {}),
+    apiClient.post(`/api/v1/plans/${planId}/trigger`),
 };
 
 // Packages API

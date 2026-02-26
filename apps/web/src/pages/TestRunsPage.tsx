@@ -17,7 +17,6 @@ function TriggerRunModal({
   preselectedFlowId?: string;
 }) {
   const [selectedFlowId, setSelectedFlowId] = useState(preselectedFlowId || '');
-  const [envVars, setEnvVars] = useState('{}');
   const [error, setError] = useState('');
 
   const queryClient = useQueryClient();
@@ -31,8 +30,7 @@ function TriggerRunModal({
   const flows = flowsData?.data?.items || [];
 
   const triggerMutation = useMutation({
-    mutationFn: (data: { flowId: string; env?: object }) =>
-      testRunsApi.trigger(data.flowId, data.env),
+    mutationFn: (data: { flowId: string }) => testRunsApi.trigger(data.flowId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['testRuns', projectId] });
       onClose();
@@ -45,7 +43,6 @@ function TriggerRunModal({
 
   const resetForm = () => {
     setSelectedFlowId('');
-    setEnvVars('{}');
     setError('');
   };
 
@@ -56,17 +53,8 @@ function TriggerRunModal({
       return;
     }
 
-    let parsedEnv;
-    try {
-      parsedEnv = JSON.parse(envVars);
-    } catch {
-      setError('环境变量JSON格式错误');
-      return;
-    }
-
     triggerMutation.mutate({
       flowId: selectedFlowId,
-      env: Object.keys(parsedEnv).length > 0 ? parsedEnv : undefined,
     });
   };
 
@@ -109,19 +97,6 @@ function TriggerRunModal({
                 ))}
               </select>
             )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              环境变量 (JSON格式)
-            </label>
-            <textarea
-              value={envVars}
-              onChange={(e) => setEnvVars(e.target.value)}
-              rows={4}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-              placeholder='{"API_URL": "https://api.example.com"}'
-            />
           </div>
 
           <div className="flex gap-3 pt-4">

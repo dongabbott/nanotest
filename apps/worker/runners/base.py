@@ -87,6 +87,7 @@ class TestNode:
     steps: list[TestStep]
     retry_on_failure: bool = False
     max_retries: int = 1
+    timeout: int = 300
 
 
 @dataclass
@@ -101,6 +102,8 @@ class ExecutionContext:
     app_package: Optional[str] = None
     app_activity: Optional[str] = None
     bundle_id: Optional[str] = None
+    appium_server_url: Optional[str] = None
+    appium_session_id: Optional[str] = None
     variables: dict[str, Any] = field(default_factory=dict)
     screenshot_on_step: bool = True
     screenshot_on_failure: bool = True

@@ -65,6 +65,8 @@ class AppiumRunner(BaseRunner):
             platform=self.context.platform,
             device_udid=self.context.device_udid,
             platform_version=self.context.platform_version,
+            server_url=self.context.appium_server_url,
+            existing_session_id=self.context.appium_session_id,
             app_path=self.context.app_path,
             app_package=self.context.app_package,
             app_activity=self.context.app_activity,

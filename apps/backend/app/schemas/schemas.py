@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 # =============================================================================
@@ -152,9 +152,12 @@ class TestStepSchema(BaseModel):
 
     action: str
     target: Optional[str] = None
+    locator_type: Optional[str] = None
     value: Optional[str] = None
+    expected: Optional[str] = None
     params: Optional[dict[str, Any]] = None
     timeout: Optional[int] = None
+    optional: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -431,13 +434,24 @@ class TestRunCreate(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     environment: dict[str, Any] = Field(default_factory=dict)
     env_config: dict[str, Any] = Field(default_factory=dict)
-    device_pool_id: Optional[UUID] = None
+
+
+class FlowRunCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    plan_id: Optional[UUID] = Field(
+        default=None,
+        validation_alias=AliasChoices("plan_id", "planId"),
+    )
+    appium_session_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("appium_session_id", "session_id", "sessionId"),
+    )
 
 
 class RunCreateRequest(BaseModel):
     """Run creation request."""
     trigger: str = Field(default="manual", pattern="^(manual|api|cron|webhook)$")
-    env: dict[str, Any] = Field(default_factory=dict)
     device_ids: Optional[list[UUID]] = None
 
 

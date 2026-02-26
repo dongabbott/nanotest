@@ -25,7 +25,7 @@ class EventPublisher:
         import redis.asyncio as redis
         
         try:
-            client = redis.from_url(settings.REDIS_URL)
+            client = redis.from_url(settings.redis_url)
             message = json.dumps({
                 "type": event_type,
                 "timestamp": datetime.utcnow().isoformat(),
@@ -43,7 +43,7 @@ class EventPublisher:
         from app.core.config import settings
         
         try:
-            client = redis.from_url(settings.REDIS_URL)
+            client = redis.from_url(settings.redis_url)
             message = json.dumps({
                 "type": event_type,
                 "timestamp": datetime.utcnow().isoformat(),
@@ -53,6 +53,37 @@ class EventPublisher:
             client.close()
         except Exception as e:
             logger.warning(f"Failed to publish event: {e}")
+
+
+# =============================================================================
+# DSL Step Parsing Helpers
+# =============================================================================
+
+def _parse_locator(step_data: dict) -> tuple[Optional[str], Optional[str]]:
+    """Parse locator_type and locator_value from a DSL step dict.
+
+    Supports multiple formats:
+      1. Explicit fields: {"locator_type": "id", "target": "my_btn"}
+      2. Compound target:  {"target": "id=my_btn"}
+      3. target only:      {"target": "my_btn"} → locator_type=None
+    """
+    locator_type = step_data.get("locator_type")
+    target = step_data.get("target")
+
+    if locator_type and target:
+        return locator_type, target
+
+    if target and "=" in target:
+        parts = target.split("=", 1)
+        # Only treat as compound if left side looks like a known locator strategy
+        known = {
+            "id", "xpath", "accessibility_id", "class_name", "name",
+            "css", "android_uiautomator", "ios_predicate", "ios_class_chain",
+        }
+        if parts[0].strip().lower() in known:
+            return parts[0].strip(), parts[1].strip()
+
+    return locator_type, target
 
 
 # =============================================================================
@@ -126,10 +157,22 @@ def execute_test_run(self, run_id: str, device_config: Optional[dict] = None) ->
                 # Build execution context
                 exec_context = _build_execution_context(run, device, device_config)
 
-                # Execute nodes
-                execution_result = await _execute_nodes_with_runner(
-                    db, run, bindings, exec_context
-                )
+                # Determine execution strategy:
+                # Use FlowRunner for DAG-based execution if flow has edges/entry_node,
+                # otherwise fall back to sequential execution.
+                flow = run.flow
+                graph = flow.graph_json or {}
+                edges = graph.get("edges", [])
+                entry_node = flow.entry_node or graph.get("entry_node")
+
+                if edges and entry_node:
+                    execution_result = await _execute_flow_with_dag(
+                        db, run, flow, bindings, exec_context
+                    )
+                else:
+                    execution_result = await _execute_nodes_with_runner(
+                        db, run, bindings, exec_context
+                    )
 
                 # Update run with results
                 run.status = execution_result["status"]
@@ -185,6 +228,7 @@ def _build_execution_context(
         "project_id": str(run.project_id),
         "flow_id": str(run.flow_id),
         "variables": run.env_config.get("variables", {}),
+        "use_real_runner": run.env_config.get("use_real_runner", False),
         "screenshot_on_failure": run.env_config.get("screenshot_on_failure", True),
         "screenshot_on_step": run.env_config.get("screenshot_on_step", False),
     }
@@ -210,7 +254,181 @@ def _build_execution_context(
             "platform_version": "13",
         })
 
+    if run.env_config.get("platform"):
+        context["platform"] = run.env_config["platform"]
+    if run.env_config.get("device_udid"):
+        context["device_udid"] = run.env_config["device_udid"]
+    if run.env_config.get("platform_version"):
+        context["platform_version"] = run.env_config["platform_version"]
+    if run.env_config.get("appium_server_url"):
+        context["appium_server_url"] = run.env_config["appium_server_url"]
+    if run.env_config.get("appium_session_id"):
+        context["appium_session_id"] = run.env_config["appium_session_id"]
+        context["use_real_runner"] = True
+
     return context
+
+
+def _build_test_steps_from_dsl(dsl_content: dict) -> list:
+    """Build TestStep list from DSL content dict using consistent locator parsing."""
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "worker"))
+    from runners.base import TestStep
+
+    steps = []
+    for i, step_data in enumerate(dsl_content.get("steps", [])):
+        locator_type, locator_value = _parse_locator(step_data)
+        steps.append(TestStep(
+            index=i,
+            action=step_data["action"],
+            locator_type=locator_type,
+            locator_value=locator_value,
+            input_value=step_data.get("value"),
+            expected_value=step_data.get("expected"),
+            timeout=step_data.get("timeout", 10),
+            optional=step_data.get("optional", False),
+            metadata=step_data.get("params", {}),
+        ))
+    return steps
+
+
+async def _execute_flow_with_dag(
+    db,
+    run,
+    flow,
+    bindings: list,
+    exec_context: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute flow using the DAG-aware FlowRunner for proper topological order,
+    conditional edges, and parallel group support."""
+    from app.domain.models import TestRunNode, TestStepResult
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "worker"))
+    from runners.flow_runner import FlowRunner
+    from runners.base import ExecutionContext
+
+    # Build data structures expected by FlowRunner.from_flow_data
+    node_bindings_data = []
+    test_cases_data = {}
+    for binding in bindings:
+        tc = binding.test_case
+        node_bindings_data.append({
+            "node_key": binding.node_key,
+            "test_case_id": binding.test_case_id,
+            "retry_policy": binding.retry_policy or {},
+            "timeout_sec": binding.timeout_sec or 300,
+        })
+        test_cases_data[binding.test_case_id] = {
+            "name": tc.name,
+            "dsl_content": tc.dsl_content,
+        }
+
+    context = ExecutionContext(
+        run_id=exec_context["run_id"],
+        project_id=exec_context["project_id"],
+        platform=exec_context.get("platform", "android"),
+        device_udid=exec_context.get("device_udid", ""),
+        platform_version=exec_context.get("platform_version", ""),
+        app_path=exec_context.get("app_path"),
+        app_package=exec_context.get("app_package"),
+        app_activity=exec_context.get("app_activity"),
+        bundle_id=exec_context.get("bundle_id"),
+        appium_server_url=exec_context.get("appium_server_url"),
+        appium_session_id=exec_context.get("appium_session_id"),
+        variables=exec_context.get("variables", {}),
+        screenshot_on_failure=exec_context.get("screenshot_on_failure", True),
+        screenshot_on_step=exec_context.get("screenshot_on_step", False),
+    )
+
+    use_real_runner = exec_context.get("use_real_runner", False)
+
+    graph_json = flow.graph_json or {}
+
+    flow_runner = FlowRunner.from_flow_data(
+        context=context,
+        flow_id=flow.id,
+        flow_name=flow.name,
+        graph_json=graph_json,
+        node_bindings=node_bindings_data,
+        test_cases=test_cases_data,
+    )
+
+    if not use_real_runner:
+        # For mock execution, run nodes sequentially using mock executor
+        return await _execute_nodes_with_runner(db, run, bindings, exec_context)
+
+    flow_result = await flow_runner.execute()
+
+    # Persist node/step results to DB
+    total_steps = 0
+    passed_steps = 0
+    failed_steps = 0
+
+    for node_key, node_result in flow_result.node_results.items():
+        node_record = TestRunNode(
+            test_run_id=run.id,
+            node_key=node_key,
+            test_case_id=str(node_result.test_case_id),
+            status=node_result.status.value,
+            attempt=node_result.retry_count + 1,
+            duration_ms=node_result.duration_ms,
+            error_message=node_result.error_message,
+            error_code=node_result.error_code,
+        )
+        db.add(node_record)
+        await db.flush()
+
+        for s in node_result.steps:
+            step_record = TestStepResult(
+                run_node_id=node_record.id,
+                step_index=s.step_index,
+                action=s.action,
+                input_payload={"value": s.actual_value},
+                status=s.status.value,
+                assertion_result={
+                    "expected": s.expected_value,
+                    "actual": s.actual_value,
+                },
+                screenshot_object_key=s.screenshot_path,
+                duration_ms=s.duration_ms,
+            )
+            db.add(step_record)
+            total_steps += 1
+            if s.status.value == "passed":
+                passed_steps += 1
+            elif s.status.value in ("failed", "error"):
+                failed_steps += 1
+
+        await db.commit()
+
+        EventPublisher.publish_sync(
+            f"run:{run.id}",
+            "node.completed",
+            {
+                "run_id": str(run.id),
+                "node_key": node_key,
+                "status": node_result.status.value,
+                "duration_ms": node_result.duration_ms,
+            }
+        )
+
+    status = flow_result.status.value
+    # Normalize status: StepStatus uses "passed"/"failed"
+    if status == "error":
+        status = "failed"
+
+    return {
+        "status": status,
+        "summary": {
+            "total_nodes": flow_result.total_nodes,
+            "passed_nodes": flow_result.passed_nodes,
+            "failed_nodes": flow_result.failed_nodes,
+            "skipped_nodes": flow_result.skipped_nodes,
+            "total_steps": total_steps,
+            "passed_steps": passed_steps,
+            "failed_steps": failed_steps,
+        },
+    }
 
 
 async def _execute_nodes_with_runner(
@@ -219,7 +437,7 @@ async def _execute_nodes_with_runner(
     bindings: list,
     exec_context: dict[str, Any],
 ) -> dict[str, Any]:
-    """Execute nodes using Appium Runner or mock execution."""
+    """Execute nodes sequentially using Appium Runner or mock execution."""
     from app.domain.models import TestRunNode, TestStepResult
     
     total_nodes = len(bindings)
@@ -344,12 +562,11 @@ async def _execute_node_with_appium(
     exec_context: dict[str, Any],
 ) -> dict[str, Any]:
     """Execute a node using the real Appium Runner."""
-    # Import here to avoid circular imports
-    import sys
-    sys.path.insert(0, str(__file__).replace("backend/app/tasks/execution.py", "worker"))
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "worker"))
     
     from runners.appium_runner import AppiumRunner
-    from runners.base import ExecutionContext, TestNode, TestStep
+    from runners.base import ExecutionContext, TestNode
 
     # Build execution context
     context = ExecutionContext(
@@ -362,28 +579,17 @@ async def _execute_node_with_appium(
         app_package=exec_context.get("app_package"),
         app_activity=exec_context.get("app_activity"),
         bundle_id=exec_context.get("bundle_id"),
+        appium_server_url=exec_context.get("appium_server_url"),
+        appium_session_id=exec_context.get("appium_session_id"),
         variables=exec_context.get("variables", {}),
         screenshot_on_failure=exec_context.get("screenshot_on_failure", True),
         screenshot_on_step=exec_context.get("screenshot_on_step", False),
     )
 
-    # Build test node from binding
+    # Build test node from binding using consistent locator parsing
     test_case = binding.test_case
     dsl_content = test_case.dsl_content
-
-    steps = []
-    for i, step_data in enumerate(dsl_content.get("steps", [])):
-        steps.append(TestStep(
-            index=i,
-            action=step_data["action"],
-            locator_type=step_data.get("locator_type"),
-            locator_value=step_data.get("target"),
-            input_value=step_data.get("value"),
-            expected_value=step_data.get("expected"),
-            timeout=step_data.get("timeout", 10),
-            optional=step_data.get("optional", False),
-            metadata=step_data.get("params", {}),
-        ))
+    steps = _build_test_steps_from_dsl(dsl_content)
 
     node = TestNode(
         node_key=binding.node_key,
@@ -478,15 +684,6 @@ def execute_single_node(
 ) -> dict[str, Any]:
     """
     Execute a single test node (for parallel execution).
-    
-    Args:
-        run_id: The test run ID
-        node_key: The node key in the flow
-        test_case_id: The test case ID to execute
-        device_config: Device configuration
-    
-    Returns:
-        Node execution result
     """
     from app.core.database import AsyncSessionLocal
     from app.domain.models import TestCase, FlowNodeBinding
@@ -552,12 +749,6 @@ def execute_single_node(
 def retry_failed_nodes(self, run_id: str) -> dict[str, Any]:
     """
     Retry all failed nodes in a test run.
-    
-    Args:
-        run_id: The test run ID
-    
-    Returns:
-        Retry result summary
     """
     from app.core.database import AsyncSessionLocal
     from app.domain.models import TestRun, TestRunNode, FlowNodeBinding
@@ -569,7 +760,6 @@ def retry_failed_nodes(self, run_id: str) -> dict[str, Any]:
             # Get failed nodes
             result = await db.execute(
                 select(TestRunNode)
-                .options(selectinload(TestRunNode.test_case))
                 .where(
                     TestRunNode.test_run_id == run_id,
                     TestRunNode.status == "failed",
@@ -601,7 +791,7 @@ def retry_failed_nodes(self, run_id: str) -> dict[str, Any]:
                 node.status = "running"
                 await db.commit()
 
-                # Get binding
+                # Get binding with test_case eagerly loaded
                 result = await db.execute(
                     select(FlowNodeBinding)
                     .options(selectinload(FlowNodeBinding.test_case))
@@ -647,12 +837,6 @@ def retry_failed_nodes(self, run_id: str) -> dict[str, Any]:
 def cancel_test_run(self, run_id: str) -> dict[str, Any]:
     """
     Cancel a running test run.
-    
-    Args:
-        run_id: The test run ID to cancel
-    
-    Returns:
-        Cancellation result
     """
     from app.core.database import AsyncSessionLocal
     from app.domain.models import TestRun, TestRunNode
@@ -668,7 +852,7 @@ def cancel_test_run(self, run_id: str) -> dict[str, Any]:
             if not run:
                 return {"success": False, "error": "Run not found"}
 
-            if run.status not in ("pending", "running"):
+            if run.status not in ("queued", "running"):
                 return {"success": False, "error": f"Cannot cancel run in status: {run.status}"}
 
             # Update run status

@@ -138,10 +138,10 @@ class FlowRunner:
             # Check if all dependencies are satisfied
             incoming_edges = self._reverse_adjacency.get(node_key, [])
             
-            # If no incoming edges and it's the entry node, it's ready
+            # If no incoming edges, this node can start immediately
+            # (entry_node or any root node in the DAG)
             if not incoming_edges:
-                if node_key == self.flow.entry_node:
-                    ready.append(node_key)
+                ready.append(node_key)
                 continue
 
             # Check all incoming edges

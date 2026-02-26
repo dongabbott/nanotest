@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Package,
@@ -19,8 +19,6 @@ import {
   Hash,
   Shield,
   Eye,
-  Copy,
-  Check,
   RefreshCw,
 } from 'lucide-react';
 import { packagesApi, projectsApi } from '../services/api';
@@ -210,12 +208,6 @@ function UploadModal({
 }
 
 function PackageDetailModal({ isOpen, onClose, pkg }: { isOpen: boolean; onClose: () => void; pkg: AppPackage | null }) {
-  const [copied, setCopied] = useState<string | null>(null);
-  const copyToClipboard = async (text: string, field: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopied(field);
-    setTimeout(() => setCopied(null), 2000);
-  };
   if (!isOpen || !pkg) return null;
   const PlatformIcon = pkg.platform === 'ios' ? Apple : Bot;
 

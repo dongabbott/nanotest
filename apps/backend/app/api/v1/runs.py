@@ -106,11 +106,11 @@ async def create_test_plan(
         )
 
     plan = TestPlan(
-        project_id=project_id,
+        project_id=str(project_id),
         name=payload.name,
         trigger_type=payload.trigger_type,
         cron_expr=payload.cron_expr,
-        flow_id=payload.flow_id,
+        flow_id=str(payload.flow_id),
         env_config=payload.env_config,
         is_enabled=payload.is_enabled,
     )
@@ -126,7 +126,7 @@ async def list_test_plans(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=200),
 ):
     """List test plans for a project."""
     await verify_project_access(project_id, current_user, db)
@@ -293,7 +293,7 @@ async def trigger_test_run(
         run_no=generate_run_number(),
         status="queued",
         triggered_by=current_user.id,
-        env_config={**plan.env_config, **payload.env},
+        env_config=plan.env_config,
         summary={},
     )
     db.add(run)
@@ -319,12 +319,9 @@ async def trigger_plan(
     plan_id: UUID,
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
-    env: Optional[dict] = None,
 ):
     """
     Trigger a test plan execution.
-    
-    This is a convenience endpoint that triggers a plan with optional environment overrides.
     """
     result = await db.execute(
         select(TestPlan)
@@ -356,7 +353,7 @@ async def trigger_plan(
         run_no=generate_run_number(),
         status="queued",
         triggered_by=current_user.id,
-        env_config={**plan.env_config, **(env or {})},
+        env_config=plan.env_config,
         summary={},
     )
     db.add(run)
@@ -379,7 +376,7 @@ async def list_test_runs(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=200),
     status_filter: str = Query(None, alias="status"),
 ):
     """List test runs for a project."""

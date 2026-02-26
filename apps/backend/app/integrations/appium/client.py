@@ -18,6 +18,8 @@ class AppiumClient:
         platform: str,
         device_udid: str,
         platform_version: str,
+        server_url: Optional[str] = None,
+        existing_session_id: Optional[str] = None,
         app_path: Optional[str] = None,
         app_package: Optional[str] = None,
         app_activity: Optional[str] = None,
@@ -26,14 +28,17 @@ class AppiumClient:
         self.platform = platform.lower()
         self.device_udid = device_udid
         self.platform_version = platform_version
+        self.server_url = server_url or settings.appium_server_url
+        self.existing_session_id = existing_session_id
         self.app_path = app_path
         self.app_package = app_package
         self.app_activity = app_activity
         self.bundle_id = bundle_id
         self._driver: Optional[webdriver.Remote] = None
+        self._started_new_session = False
 
-    def _get_capabilities(self) -> dict[str, Any]:
-        """Get Appium capabilities based on platform."""
+    def _get_options(self) -> Any:
+        """Get Appium options based on platform."""
         if self.platform == "android":
             options = UiAutomator2Options()
             options.platform_name = "Android"
@@ -50,7 +55,7 @@ class AppiumClient:
             if self.app_activity:
                 options.app_activity = self.app_activity
             
-            return options.to_capabilities()
+            return options
         
         elif self.platform == "ios":
             options = XCUITestOptions()
@@ -66,22 +71,41 @@ class AppiumClient:
             if self.bundle_id:
                 options.bundle_id = self.bundle_id
             
-            return options.to_capabilities()
+            return options
         
         else:
             raise ValueError(f"Unsupported platform: {self.platform}")
 
     def start_session(self) -> None:
         """Start an Appium session."""
-        capabilities = self._get_capabilities()
+        if self.existing_session_id:
+            from appium.options.common.base import AppiumOptions
+            from appium.webdriver.webdriver import WebDriver as AppiumWebDriver
+
+            class AttachedWebDriver(AppiumWebDriver):
+                def __init__(self, command_executor: str, session_id: str):
+                    self._attached_session_id = session_id
+                    super().__init__(command_executor=command_executor, options=AppiumOptions())
+
+                def start_session(self, capabilities, browser_profile: Optional[str] = None) -> None:
+                    self.session_id = self._attached_session_id
+                    self.caps = {}
+                    self.w3c = True
+
+            self._driver = AttachedWebDriver(self.server_url, self.existing_session_id)
+            self._started_new_session = False
+            return
+
+        options = self._get_options()
         self._driver = webdriver.Remote(
-            command_executor=settings.appium_server_url,
-            options=capabilities,
+            command_executor=self.server_url,
+            options=options,
         )
+        self._started_new_session = True
 
     def stop_session(self) -> None:
         """Stop the Appium session."""
-        if self._driver:
+        if self._driver and self._started_new_session:
             self._driver.quit()
             self._driver = None
 

@@ -7,7 +7,7 @@ from app.tasks.analysis import (
 )
 from app.tasks.execution import (
     execute_test_run,
-    execute_test_node,
+    execute_single_node as execute_test_node,
 )
 from app.tasks.reports import (
     generate_run_report,

@@ -1,9 +1,6 @@
-import React from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  FolderKanban, 
-  Settings, 
+import {
+  FolderKanban,
   LogOut,
   User,
   Bell,

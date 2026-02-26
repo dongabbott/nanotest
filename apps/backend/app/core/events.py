@@ -18,7 +18,7 @@ async def get_redis_client() -> redis.Redis:
     """Get or create Redis client for event publishing."""
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis.from_url(settings.REDIS_URL)
+        _redis_client = redis.from_url(settings.redis_url)
     return _redis_client
 
 

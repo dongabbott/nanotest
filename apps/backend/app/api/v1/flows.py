@@ -2,7 +2,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,11 +13,11 @@ from app.schemas.schemas import (
     CompileFlowResponse,
     FlowNodeBindingCreate,
     FlowNodeBindingResponse,
+    FlowRunCreateRequest,
     TestFlowCreate,
     TestFlowListResponse,
     TestFlowResponse,
     TestFlowUpdate,
-    TestRunCreate,
     TestRunResponse,
 )
 
@@ -80,7 +80,7 @@ async def list_test_flows(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=200),
 ):
     """List test flows for a project."""
     await verify_project_access(project_id, current_user, db)
@@ -247,6 +247,22 @@ async def create_flow_binding(
             detail="Test case not found",
         )
 
+    result = await db.execute(
+        select(FlowNodeBinding).where(
+            FlowNodeBinding.flow_id == str(flow_id),
+            FlowNodeBinding.node_key == payload.node_key,
+        )
+    )
+    binding = result.scalar_one_or_none()
+
+    if binding:
+        binding.test_case_id = str(payload.test_case_id)
+        binding.retry_policy = payload.retry_policy
+        binding.timeout_sec = payload.timeout_sec
+        await db.flush()
+        await db.refresh(binding)
+        return FlowNodeBindingResponse.model_validate(binding)
+
     binding = FlowNodeBinding(
         flow_id=str(flow_id),
         node_key=payload.node_key,
@@ -287,6 +303,46 @@ async def list_flow_bindings(
     )
     bindings = result.scalars().all()
     return [FlowNodeBindingResponse.model_validate(b) for b in bindings]
+
+
+@router.delete("/flows/{flow_id}/bindings/{node_key}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_flow_binding(
+    flow_id: UUID,
+    node_key: str,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a node binding for a flow."""
+    result = await db.execute(
+        select(TestFlow)
+        .join(Project)
+        .where(
+            TestFlow.id == str(flow_id),
+            Project.tenant_id == current_user.tenant_id,
+            TestFlow.deleted_at.is_(None),
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Test flow not found",
+        )
+
+    result = await db.execute(
+        select(FlowNodeBinding).where(
+            FlowNodeBinding.flow_id == str(flow_id),
+            FlowNodeBinding.node_key == node_key,
+        )
+    )
+    binding = result.scalar_one_or_none()
+    if not binding:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Binding not found",
+        )
+
+    await db.delete(binding)
+    await db.flush()
 
 
 @router.post("/flows/{flow_id}/compile", response_model=CompileFlowResponse)
@@ -357,9 +413,9 @@ async def compile_flow(
 @router.post("/flows/{flow_id}/runs", response_model=TestRunResponse, status_code=status.HTTP_201_CREATED)
 async def create_flow_run(
     flow_id: UUID,
-    payload: TestRunCreate,
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
+    payload: FlowRunCreateRequest = Body(default_factory=FlowRunCreateRequest),
 ):
     """Create and trigger a new test run for a flow."""
     from datetime import datetime
@@ -387,10 +443,69 @@ async def create_flow_run(
     )
     binding_count = result.scalar() or 0
     if binding_count == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Flow has no node bindings. Add test cases to the flow before running.",
-        )
+        graph = flow.graph_json or {}
+        nodes = graph.get("nodes", []) or []
+        candidates: list[tuple[str, str, int]] = []
+
+        for node in nodes:
+            if node.get("type") != "test_case":
+                continue
+            node_key = node.get("id")
+            data = node.get("data") or {}
+            test_case_id = (
+                data.get("testCaseId")
+                or data.get("test_case_id")
+                or data.get("testCaseID")
+            )
+            if not node_key or not test_case_id:
+                continue
+
+            timeout_sec = data.get("timeout")
+            try:
+                timeout_sec_int = int(timeout_sec) if timeout_sec is not None else 300
+            except (TypeError, ValueError):
+                timeout_sec_int = 300
+
+            timeout_sec_int = max(1, min(timeout_sec_int, 3600))
+            candidates.append((str(node_key), str(test_case_id), timeout_sec_int))
+
+        if candidates:
+            case_ids = {c[1] for c in candidates}
+            result = await db.execute(
+                select(TestCase.id)
+                .join(Project)
+                .where(
+                    TestCase.id.in_(case_ids),
+                    Project.tenant_id == current_user.tenant_id,
+                    TestCase.deleted_at.is_(None),
+                )
+            )
+            allowed_case_ids = set(result.scalars().all())
+
+            for node_key, test_case_id, timeout_sec_int in candidates:
+                if test_case_id not in allowed_case_ids:
+                    continue
+                db.add(
+                    FlowNodeBinding(
+                        flow_id=str(flow_id),
+                        node_key=node_key,
+                        test_case_id=test_case_id,
+                        retry_policy={},
+                        timeout_sec=timeout_sec_int,
+                    )
+                )
+            await db.flush()
+
+            result = await db.execute(
+                select(func.count()).where(FlowNodeBinding.flow_id == str(flow_id))
+            )
+            binding_count = result.scalar() or 0
+
+        if binding_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Flow has no node bindings. Add test cases to the flow before running.",
+            )
     
     result = await db.execute(
         select(func.count()).where(TestRun.flow_id == str(flow_id))
@@ -398,6 +513,35 @@ async def create_flow_run(
     run_count = (result.scalar() or 0) + 1
     run_no = f"RUN-{str(flow_id)[:8].upper()}-{run_count:04d}"
     
+    env_config: dict = {}
+
+    if payload.appium_session_id:
+        from app.api.v1.devices import _appium_sessions_store
+
+        tenant_key = str(current_user.tenant_id)
+        session_info = _appium_sessions_store.get(tenant_key, payload.appium_session_id)
+        if not session_info:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Appium session not found",
+            )
+
+        caps = session_info.get("capabilities") or {}
+        env_config.setdefault("use_real_runner", True)
+        env_config.setdefault("appium_server_url", session_info.get("server_url"))
+        env_config.setdefault("appium_session_id", payload.appium_session_id)
+
+        platform = (caps.get("platformName") or caps.get("platform") or "").lower() or None
+        device_udid = caps.get("udid") or caps.get("deviceUDID") or caps.get("device_udid")
+        platform_version = caps.get("platformVersion") or caps.get("platform_version")
+
+        if platform:
+            env_config.setdefault("platform", platform)
+        if device_udid:
+            env_config.setdefault("device_udid", device_udid)
+        if platform_version:
+            env_config.setdefault("platform_version", str(platform_version))
+
     test_run = TestRun(
         project_id=flow.project_id,
         plan_id=payload.plan_id,
@@ -405,7 +549,7 @@ async def create_flow_run(
         run_no=run_no,
         status="queued",
         triggered_by=current_user.id,
-        env_config=payload.env_config or {},
+        env_config=env_config,
     )
     db.add(test_run)
     await db.flush()

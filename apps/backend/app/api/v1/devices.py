@@ -18,6 +18,10 @@ from app.schemas.schemas import (
     DeviceUpdate,
 )
 
+import json as _json
+import redis as _sync_redis
+from app.core.config import settings as _settings
+
 router = APIRouter(tags=["Devices"])
 
 
@@ -169,7 +173,86 @@ class SessionActionResponse(BaseModel):
     data: Optional[dict] = None
 
 
-_appium_sessions: dict = {}
+# ---------------------------------------------------------------------------
+# Redis-backed Appium session store (replaces in-memory dict)
+# ---------------------------------------------------------------------------
+
+def _redis_client() -> _sync_redis.Redis:
+    return _sync_redis.from_url(_settings.redis_url, decode_responses=True)
+
+
+def _session_key(tenant_id: str, session_id: str) -> str:
+    return f"appium:session:{tenant_id}:{session_id}"
+
+
+def _tenant_sessions_pattern(tenant_id: str) -> str:
+    return f"appium:session:{tenant_id}:*"
+
+
+class _AppiumSessionStore:
+    """Redis-backed store that exposes a dict-like interface for backward compat."""
+
+    # ---- write ----
+    @staticmethod
+    def set(tenant_id: str, session_id: str, data: dict, ttl: int = 86400) -> None:
+        """Store session info with a default TTL of 24 h."""
+        r = _redis_client()
+        # datetime objects are not JSON-serialisable; convert them
+        safe = {}
+        for k, v in data.items():
+            if isinstance(v, datetime):
+                safe[k] = v.isoformat()
+            elif isinstance(v, UUID):
+                safe[k] = str(v)
+            else:
+                safe[k] = v
+        r.set(_session_key(tenant_id, session_id), _json.dumps(safe), ex=ttl)
+
+    @staticmethod
+    def delete(tenant_id: str, session_id: str) -> None:
+        r = _redis_client()
+        r.delete(_session_key(tenant_id, session_id))
+
+    # ---- read ----
+    @staticmethod
+    def get(tenant_id: str, session_id: str) -> Optional[dict]:
+        r = _redis_client()
+        raw = r.get(_session_key(tenant_id, session_id))
+        if raw is None:
+            return None
+        return _json.loads(raw)
+
+    @staticmethod
+    def get_all(tenant_id: str) -> dict[str, dict]:
+        r = _redis_client()
+        keys = r.keys(_tenant_sessions_pattern(tenant_id))
+        result: dict[str, dict] = {}
+        for key in keys:
+            raw = r.get(key)
+            if raw:
+                data = _json.loads(raw)
+                sid = data.get("session_id") or key.rsplit(":", 1)[-1]
+                result[sid] = data
+        return result
+
+    @staticmethod
+    def exists(tenant_id: str, session_id: str) -> bool:
+        r = _redis_client()
+        return bool(r.exists(_session_key(tenant_id, session_id)))
+
+    @staticmethod
+    def update_field(tenant_id: str, session_id: str, field: str, value) -> None:
+        data = _AppiumSessionStore.get(tenant_id, session_id)
+        if data:
+            data[field] = value
+            _AppiumSessionStore.set(tenant_id, session_id, data)
+
+
+_appium_sessions_store = _AppiumSessionStore()
+
+# Keep the old module-level name so that other modules that import it
+# (e.g. flows.py) can still work – but it now proxies to Redis.
+_appium_sessions: dict = {}  # DEPRECATED – only kept as fallback reference
 
 
 # =============================================================================
@@ -683,12 +766,10 @@ async def start_appium_session(
                     session_id = data.get("value", {}).get("sessionId")
                     if session_id:
                         tenant_key = str(current_user.tenant_id)
-                        if tenant_key not in _appium_sessions:
-                            _appium_sessions[tenant_key] = {}
-                        _appium_sessions[tenant_key][session_id] = {
+                        _appium_sessions_store.set(tenant_key, session_id, {
                             "server_url": payload.server_url,
                             "capabilities": payload.capabilities,
-                        }
+                        })
                         return StartSessionResponse(
                             success=True,
                             session_id=session_id,
@@ -722,15 +803,14 @@ async def get_page_source(
     import aiohttp
     
     tenant_key = str(current_user.tenant_id)
-    sessions = _appium_sessions.get(tenant_key, {})
+    session_info = _appium_sessions_store.get(tenant_key, session_id)
     
-    if session_id not in sessions:
+    if not session_info:
         return PageSourceResponse(
             success=False,
             message="Session not found. Please start a new session.",
         )
     
-    session_info = sessions[session_id]
     server_url = session_info["server_url"]
     
     try:
@@ -775,10 +855,10 @@ async def stop_appium_session(
     import aiohttp
     
     tenant_key = str(current_user.tenant_id)
-    sessions = _appium_sessions.get(tenant_key, {})
     
-    if session_id in sessions:
-        session_info = sessions[session_id]
+    session_info = _appium_sessions_store.get(tenant_key, session_id)
+    
+    if session_info:
         server_url = session_info["server_url"]
         
         try:
@@ -790,7 +870,7 @@ async def stop_appium_session(
         except Exception:
             pass
         
-        del _appium_sessions[tenant_key][session_id]
+        _appium_sessions_store.delete(tenant_key, session_id)
 
 
 # =============================================================================
@@ -932,8 +1012,6 @@ async def create_session_from_package(
     
     # 6. 保存 Session 信息
     tenant_key = str(current_user.tenant_id)
-    if tenant_key not in _appium_sessions:
-        _appium_sessions[tenant_key] = {}
     
     session_info_data = {
         "session_id": session_id,
@@ -950,7 +1028,7 @@ async def create_session_from_package(
         "capabilities": caps,
     }
     
-    _appium_sessions[tenant_key][session_id] = session_info_data
+    _appium_sessions_store.set(tenant_key, session_id, session_info_data)
     
     # 7. 更新设备状态为 busy（如果已注册）
     if db_device:
@@ -966,7 +1044,7 @@ async def list_active_sessions(
 ):
     """列出当前租户的所有活跃 Appium Sessions。"""
     tenant_key = str(current_user.tenant_id)
-    sessions = _appium_sessions.get(tenant_key, {})
+    sessions = _appium_sessions_store.get_all(tenant_key)
     
     session_list = []
     for s in sessions.values():
@@ -995,26 +1073,25 @@ async def get_session_detail(
 ):
     """获取指定 Session 的详细信息。"""
     tenant_key = str(current_user.tenant_id)
-    sessions = _appium_sessions.get(tenant_key, {})
+    session_info = _appium_sessions_store.get(tenant_key, session_id)
     
-    if session_id not in sessions:
+    if not session_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
     
-    s = sessions[session_id]
-    if "session_id" in s:
-        return SessionInfo(**s)
+    if "session_id" in session_info:
+        return SessionInfo(**session_info)
     else:
         return SessionInfo(
             session_id=session_id,
-            device_udid=s.get("capabilities", {}).get("appium:udid", "unknown"),
-            platform=s.get("capabilities", {}).get("platformName", "unknown").lower(),
-            server_url=s.get("server_url", ""),
+            device_udid=session_info.get("capabilities", {}).get("appium:udid", "unknown"),
+            platform=session_info.get("capabilities", {}).get("platformName", "unknown").lower(),
+            server_url=session_info.get("server_url", ""),
             status="active",
             created_at=datetime.utcnow(),
-            capabilities=s.get("capabilities", {}),
+            capabilities=session_info.get("capabilities", {}),
         )
 
 
@@ -1035,15 +1112,14 @@ async def perform_session_action(
     import aiohttp
     
     tenant_key = str(current_user.tenant_id)
-    sessions = _appium_sessions.get(tenant_key, {})
+    session_info = _appium_sessions_store.get(tenant_key, session_id)
     
-    if session_id not in sessions:
+    if not session_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
     
-    session_info = sessions[session_id]
     server_url = session_info.get("server_url", "")
     base_url = f"{server_url}/session/{session_id}"
     
@@ -1109,7 +1185,7 @@ async def perform_session_action(
                 return SessionActionResponse(success=True, message=f"App {app_id} reset")
     
     except aiohttp.ClientError as e:
-        sessions[session_id]["status"] = "disconnected"
+        _appium_sessions_store.update_field(tenant_key, session_id, "status", "disconnected")
         return SessionActionResponse(success=False, message=f"Connection error: {str(e)}")
     except Exception as e:
         return SessionActionResponse(success=False, message=f"Error: {str(e)}")
@@ -1124,15 +1200,14 @@ async def refresh_session_status(
     import aiohttp
     
     tenant_key = str(current_user.tenant_id)
-    sessions = _appium_sessions.get(tenant_key, {})
+    session_info = _appium_sessions_store.get(tenant_key, session_id)
     
-    if session_id not in sessions:
+    if not session_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
     
-    session_info = sessions[session_id]
     server_url = session_info.get("server_url", "")
     
     try:
@@ -1140,13 +1215,13 @@ async def refresh_session_status(
         async with aiohttp.ClientSession(timeout=timeout) as client:
             async with client.get(f"{server_url}/session/{session_id}") as response:
                 if response.status == 200:
-                    session_info["status"] = "active"
+                    _appium_sessions_store.update_field(tenant_key, session_id, "status", "active")
                 else:
-                    session_info["status"] = "disconnected"
+                    _appium_sessions_store.update_field(tenant_key, session_id, "status", "disconnected")
     except Exception:
-        session_info["status"] = "error"
+        _appium_sessions_store.update_field(tenant_key, session_id, "status", "error")
     
-    sessions[session_id] = session_info
+    session_info = _appium_sessions_store.get(tenant_key, session_id)
     
     if "session_id" in session_info:
         return SessionInfo(**session_info)
@@ -1172,15 +1247,14 @@ async def terminate_session_and_release(
     import aiohttp
     
     tenant_key = str(current_user.tenant_id)
-    sessions = _appium_sessions.get(tenant_key, {})
+    session_info = _appium_sessions_store.get(tenant_key, session_id)
     
-    if session_id not in sessions:
+    if not session_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
     
-    session_info = sessions[session_id]
     server_url = session_info.get("server_url", "")
     device_udid = session_info.get("device_udid")
     
@@ -1193,7 +1267,7 @@ async def terminate_session_and_release(
         pass
     
     # 2. 从内存中删除
-    del _appium_sessions[tenant_key][session_id]
+    _appium_sessions_store.delete(tenant_key, session_id)
     
     # 3. 释放设备（如果已注册）
     if device_udid:
@@ -1223,7 +1297,7 @@ async def list_devices(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=200),
     platform: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
 ):

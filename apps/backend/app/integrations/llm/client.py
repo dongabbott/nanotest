@@ -3,7 +3,6 @@ import base64
 import time
 from typing import Any, Optional
 
-import httpx
 from openai import AsyncOpenAI
 
 from app.core.config import settings
@@ -13,9 +12,17 @@ class LLMClient:
     """LLM client for AI-powered screenshot and test analysis."""
 
     def __init__(self):
-        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        client_kwargs: dict[str, Any] = {}
+        if settings.llm_base_url:
+            client_kwargs["base_url"] = settings.llm_base_url
+
+        self._client = AsyncOpenAI(api_key=settings.openai_api_key, **client_kwargs)
         self.model = settings.openai_model
         self.timeout = settings.ai_analysis_timeout
+
+    def _png_data_url(self, png_bytes: bytes) -> str:
+        image_base64 = base64.b64encode(png_bytes).decode("utf-8")
+        return f"data:image/png;base64,{image_base64}"
 
     async def analyze_screenshot(
         self,
@@ -26,10 +33,6 @@ class LLMClient:
         """Analyze a screenshot using vision model."""
         start_time = time.time()
 
-        # Encode image to base64
-        image_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-
-        # Build prompt based on analysis type
         prompts = {
             "ui_state": """Analyze this mobile app screenshot and describe:
 1. The current screen/page type (login, home, settings, etc.)
@@ -38,7 +41,6 @@ class LLMClient:
 4. Any actionable elements and their locations
 
 Respond in JSON format with keys: screen_type, elements, state, actionable_items""",
-
             "anomaly": """Analyze this mobile app screenshot for potential issues:
 1. UI rendering problems (overlapping elements, cut-off text, etc.)
 2. Layout issues (misalignment, spacing problems)
@@ -47,7 +49,6 @@ Respond in JSON format with keys: screen_type, elements, state, actionable_items
 5. Any visual anomalies or bugs
 
 Respond in JSON format with keys: has_anomaly, anomalies (list), severity, summary""",
-
             "element_detect": """Identify all interactive UI elements in this screenshot:
 1. Buttons and their labels
 2. Text input fields
@@ -60,41 +61,46 @@ For each element, provide: type, label/text, approximate_location (top/middle/bo
 Respond in JSON format with key: elements (list of objects)""",
         }
 
-        system_prompt = prompts.get(analysis_type, prompts["ui_state"])
+        prompt_text = prompts.get(analysis_type, prompts["ui_state"])
         if additional_context:
-            system_prompt += f"\n\nAdditional context: {additional_context}"
+            prompt_text += f"\n\nAdditional context: {additional_context}"
 
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._client.responses.create(
                 model=self.model,
-                messages=[
+                input=[
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": system_prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{image_base64}",
-                                    "detail": "high",
-                                },
-                            },
+                            {"type": "input_image", "image_url": self._png_data_url(screenshot_bytes)},
+                            {"type": "input_text", "text": prompt_text},
                         ],
                     }
                 ],
-                max_tokens=1500,
                 timeout=self.timeout,
             )
 
             latency_ms = int((time.time() - start_time) * 1000)
-            content = response.choices[0].message.content
 
-            # Try to parse as JSON
-            import json
+            # The Responses API returns a structured content array; fall back to string if needed.
+            output_text: Optional[str] = None
             try:
-                result_json = json.loads(content)
+                output_text = response.output_text
+            except Exception:
+                output_text = None
+
+            if not output_text:
+                # best-effort extraction
+                import json as _json
+
+                output_text = _json.dumps(response.model_dump(), ensure_ascii=False)
+
+            import json
+
+            try:
+                result_json = json.loads(output_text)
             except json.JSONDecodeError:
-                result_json = {"raw_response": content}
+                result_json = {"raw_response": output_text}
 
             return {
                 "success": True,
@@ -102,7 +108,7 @@ Respond in JSON format with key: elements (list of objects)""",
                 "result": result_json,
                 "model": self.model,
                 "latency_ms": latency_ms,
-                "confidence": 0.85,  # Placeholder - could be derived from model response
+                "confidence": 0.85,
             }
 
         except Exception as e:
@@ -124,9 +130,6 @@ Respond in JSON format with key: elements (list of objects)""",
         """Compare two screenshots for visual differences."""
         start_time = time.time()
 
-        baseline_b64 = base64.b64encode(baseline_bytes).decode("utf-8")
-        target_b64 = base64.b64encode(target_bytes).decode("utf-8")
-
         prompt = """Compare these two mobile app screenshots (first is baseline, second is current):
 1. Identify visual differences between them
 2. Categorize changes as: layout_change, text_change, color_change, element_added, element_removed, other
@@ -136,42 +139,34 @@ Respond in JSON format with key: elements (list of objects)""",
 Respond in JSON format with keys: differences (list), overall_similarity (0-100), risk_level (low/medium/high), summary"""
 
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._client.responses.create(
                 model=self.model,
-                messages=[
+                input=[
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{baseline_b64}",
-                                    "detail": "high",
-                                },
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{target_b64}",
-                                    "detail": "high",
-                                },
-                            },
+                            {"type": "input_image", "image_url": self._png_data_url(baseline_bytes)},
+                            {"type": "input_image", "image_url": self._png_data_url(target_bytes)},
+                            {"type": "input_text", "text": prompt},
                         ],
                     }
                 ],
-                max_tokens=2000,
                 timeout=self.timeout,
             )
 
             latency_ms = int((time.time() - start_time) * 1000)
-            content = response.choices[0].message.content
+            output_text = getattr(response, "output_text", None)
+            if not output_text:
+                import json as _json
+
+                output_text = _json.dumps(response.model_dump(), ensure_ascii=False)
 
             import json
+
             try:
-                result_json = json.loads(content)
+                result_json = json.loads(output_text)
             except json.JSONDecodeError:
-                result_json = {"raw_response": content}
+                result_json = {"raw_response": output_text}
 
             return {
                 "success": True,
@@ -197,8 +192,6 @@ Respond in JSON format with keys: differences (list), overall_similarity (0-100)
         """Generate test step suggestions based on current screen."""
         start_time = time.time()
 
-        image_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-
         prompt = """Based on this mobile app screenshot, suggest the next test actions:
 1. What interactive elements are available?
 2. What would be logical test steps from this screen?
@@ -213,35 +206,33 @@ Respond in JSON format with keys:
             prompt += f"\n\nCurrent test context: {current_test_context}"
 
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._client.responses.create(
                 model=self.model,
-                messages=[
+                input=[
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{image_base64}",
-                                    "detail": "high",
-                                },
-                            },
+                            {"type": "input_image", "image_url": self._png_data_url(screenshot_bytes)},
+                            {"type": "input_text", "text": prompt},
                         ],
                     }
                 ],
-                max_tokens=1500,
                 timeout=self.timeout,
             )
 
             latency_ms = int((time.time() - start_time) * 1000)
-            content = response.choices[0].message.content
+            output_text = getattr(response, "output_text", None)
+            if not output_text:
+                import json as _json
+
+                output_text = _json.dumps(response.model_dump(), ensure_ascii=False)
 
             import json
+
             try:
-                result_json = json.loads(content)
+                result_json = json.loads(output_text)
             except json.JSONDecodeError:
-                result_json = {"raw_response": content}
+                result_json = {"raw_response": output_text}
 
             return {
                 "success": True,
@@ -260,7 +251,6 @@ Respond in JSON format with keys:
             }
 
 
-# Singleton instance
 _llm_client: Optional[LLMClient] = None
 
 
