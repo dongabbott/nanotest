@@ -129,6 +129,14 @@ function StepRow({ step, index }: { step: any; index: number }) {
   const [openingScreenshot, setOpeningScreenshot] = useState(false);
 
   const openScreenshot = async () => {
+    // Prefer the plain screenshot_url returned by the API
+    const directUrl = step.screenshot_url;
+    if (directUrl) {
+      window.open(directUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    // Fallback: presign if only object_key is available
     if (!step.screenshot_object_key) return;
     setOpeningScreenshot(true);
     try {
@@ -362,7 +370,7 @@ function NodeCard({ node }: { node: any }) {
 function EnvConfigPanel({ envConfig }: { envConfig: Record<string, any> }) {
   if (!envConfig || Object.keys(envConfig).length === 0) return null;
 
-  const isReal = envConfig.use_real_runner;
+  const isReal = true;
   const items = [
     { icon: Monitor, label: '执行模式', value: isReal ? '真机执行' : '模拟执行', highlight: true },
     envConfig.platform && { icon: Smartphone, label: '平台', value: envConfig.platform },

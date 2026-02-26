@@ -67,10 +67,14 @@ function TriggerRunModal({
       setError('请选择测试流程');
       return;
     }
+    if (!selectedSessionId) {
+      setError('请选择关联设备会话');
+      return;
+    }
 
     triggerMutation.mutate({
       flowId: selectedFlowId,
-      sessionId: selectedSessionId || undefined,
+      sessionId: selectedSessionId,
     });
   };
 
@@ -115,13 +119,12 @@ function TriggerRunModal({
             )}
           </div>
 
-          {/* Appium Session 选择（可选） */}
+          {/* Appium Session 选择 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               <span className="flex items-center gap-1.5">
                 <Smartphone size={14} />
-                关联设备会话
-                <span className="text-xs text-gray-400 font-normal">（可选，不选则模拟执行）</span>
+                关联设备会话 <span className="text-red-500">*</span>
               </span>
             </label>
             {sessions.length === 0 ? (
@@ -133,8 +136,9 @@ function TriggerRunModal({
                 value={selectedSessionId}
                 onChange={(e) => setSelectedSessionId(e.target.value)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
               >
-                <option value="">-- 不关联设备（模拟执行） --</option>
+                <option value="">-- 请选择会话 --</option>
                 {sessions.map((session: any) => (
                   <option key={session.session_id} value={session.session_id}>
                     {session.app_name || session.package_name || '未知应用'} · {session.device_name || session.device_udid} ({session.platform})

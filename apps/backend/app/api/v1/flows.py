@@ -515,6 +515,13 @@ async def create_flow_run(
     
     env_config: dict = {}
 
+    # Mock execution removed: appium_session_id is now required
+    if not payload.appium_session_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Appium session_id is required (mock execution has been removed)",
+        )
+
     if payload.appium_session_id:
         from app.api.v1.devices import _appium_sessions_store
 

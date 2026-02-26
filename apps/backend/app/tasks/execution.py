@@ -315,7 +315,6 @@ def _build_execution_context(
       1. Fields stored in run.env_config (set by the API from Appium session data)
       2. Device record from DB
       3. Explicit device_config override passed to the task
-      4. Defaults (mock context)
     """
     env = run.env_config or {}
 
@@ -326,7 +325,6 @@ def _build_execution_context(
         "variables": env.get("variables", {}),
         "use_real_runner": env.get("use_real_runner", False),
         "screenshot_on_failure": env.get("screenshot_on_failure", True),
-        # If env_config does not specify screenshot_on_step, decide later based on runner type.
         "screenshot_on_step": env.get("screenshot_on_step"),
     }
 
@@ -343,13 +341,6 @@ def _build_execution_context(
         })
     elif device_config:
         context.update(device_config)
-    else:
-        # Default mock context for testing
-        context.update({
-            "platform": "android",
-            "device_udid": "emulator-5554",
-            "platform_version": "13",
-        })
 
     # env_config fields (written by create_flow_run from Appium session)
     # always override because they come from the actual session the user chose.
@@ -398,8 +389,7 @@ async def _execute_flow_with_dag(
     bindings: list,
     exec_context: dict[str, Any],
 ) -> dict[str, Any]:
-    """Execute flow using the DAG-aware FlowRunner for proper topological order,
-    conditional edges, and parallel group support."""
+    """Execute flow using the DAG-aware FlowRunner."""
     from app.domain.models import TestRunNode, TestStepResult
     import sys, os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "worker"))
@@ -441,6 +431,10 @@ async def _execute_flow_with_dag(
 
     use_real_runner = exec_context.get("use_real_runner", False)
 
+    # Mock execution removed: real runner is mandatory now
+    if not use_real_runner:
+        raise ValueError("No device session bound: please select an active Appium session to run the flow")
+
     graph_json = flow.graph_json or {}
 
     flow_runner = FlowRunner.from_flow_data(
@@ -451,10 +445,6 @@ async def _execute_flow_with_dag(
         node_bindings=node_bindings_data,
         test_cases=test_cases_data,
     )
-
-    if not use_real_runner:
-        # For mock execution, run nodes sequentially using mock executor
-        return await _execute_nodes_with_runner(db, run, bindings, exec_context)
 
     flow_result = await flow_runner.execute()
 
@@ -536,7 +526,7 @@ async def _execute_nodes_with_runner(
     bindings: list,
     exec_context: dict[str, Any],
 ) -> dict[str, Any]:
-    """Execute nodes sequentially using Appium Runner or mock execution."""
+    """Execute nodes sequentially using Appium Runner."""
     from app.domain.models import TestRunNode, TestStepResult
     
     total_nodes = len(bindings)
@@ -547,7 +537,9 @@ async def _execute_nodes_with_runner(
     passed_steps = 0
     failed_steps = 0
 
-    use_real_runner = exec_context.get("use_real_runner", False)
+    # Mock execution removed: real runner is mandatory now
+    if not exec_context.get("use_real_runner"):
+        raise ValueError("No device session bound: please select an active Appium session to run the flow")
 
     for binding in bindings:
         # Create run node record
@@ -573,14 +565,7 @@ async def _execute_nodes_with_runner(
         )
 
         try:
-            if use_real_runner:
-                # Use real Appium Runner
-                node_result = await _execute_node_with_appium(
-                    binding, exec_context
-                )
-            else:
-                # Mock execution for testing
-                node_result = await _mock_execute_node(binding)
+            node_result = await _execute_node_with_appium(binding, exec_context)
 
             # Save step results
             for step_result in node_result.get("steps", []):
@@ -732,44 +717,6 @@ async def _execute_node_with_appium(
         await runner.teardown()
 
 
-async def _mock_execute_node(binding) -> dict[str, Any]:
-    """Mock node execution for testing without real devices."""
-    import random
-    
-    test_case = binding.test_case
-    dsl_content = test_case.dsl_content
-    steps_data = dsl_content.get("steps", [])
-
-    # Simulate execution time
-    await asyncio.sleep(0.1)
-
-    # Generate mock step results
-    steps = []
-    node_passed = True
-    
-    for i, step_data in enumerate(steps_data):
-        # 90% pass rate for mock
-        step_passed = random.random() < 0.9
-        
-        steps.append({
-            "step_index": i,
-            "action": step_data.get("action", "unknown"),
-            "status": "passed" if step_passed else "failed",
-            "duration_ms": random.randint(100, 500),
-            "input_payload": {"target": step_data.get("target")},
-            "assertion_result": {},
-        })
-        
-        if not step_passed and not step_data.get("optional", False):
-            node_passed = False
-
-    return {
-        "status": "passed" if node_passed else "failed",
-        "duration_ms": sum(s["duration_ms"] for s in steps),
-        "steps": steps,
-    }
-
-
 # =============================================================================
 # Single Node Execution Task
 # =============================================================================
@@ -789,17 +736,17 @@ def execute_single_node(
     from app.domain.models import TestCase, FlowNodeBinding
     from sqlalchemy import select
 
+    # Mock execution removed
+    if not device_config.get("use_real_runner"):
+        return {"success": False, "error": "No device session bound"}
+
     async def _execute():
         async with AsyncSessionLocal() as db:
-            # Get test case
-            result = await db.execute(
-                select(TestCase).where(TestCase.id == test_case_id)
-            )
+            result = await db.execute(select(TestCase).where(TestCase.id == test_case_id))
             test_case = result.scalar_one_or_none()
             if not test_case:
                 return {"success": False, "error": "Test case not found"}
 
-            # Get binding for retry policy
             result = await db.execute(
                 select(FlowNodeBinding).where(
                     FlowNodeBinding.node_key == node_key,
@@ -807,36 +754,17 @@ def execute_single_node(
                 )
             )
             binding = result.scalar_one_or_none()
+            if not binding:
+                return {"success": False, "error": "Binding not found"}
 
-            # Create mock binding if not found
-            class MockBinding:
-                def __init__(self):
-                    self.node_key = node_key
-                    self.test_case_id = test_case_id
-                    self.test_case = test_case
-                    self.retry_policy = {}
-                    self.timeout_sec = 300
-
-            exec_binding = binding or MockBinding()
-            exec_binding.test_case = test_case
-
-            # Execute
             exec_context = {
                 "run_id": run_id,
                 "project_id": str(test_case.project_id),
                 **device_config,
             }
 
-            if device_config.get("use_real_runner"):
-                node_result = await _execute_node_with_appium(exec_binding, exec_context)
-            else:
-                node_result = await _mock_execute_node(exec_binding)
-
-            return {
-                "success": True,
-                "node_key": node_key,
-                **node_result,
-            }
+            node_result = await _execute_node_with_appium(binding, exec_context)
+            return {"success": True, "node_key": node_key, **node_result}
 
     return asyncio.run(_execute())
 
@@ -857,28 +785,25 @@ def retry_failed_nodes(self, run_id: str) -> dict[str, Any]:
 
     async def _retry():
         async with AsyncSessionLocal() as db:
-            # Get failed nodes
             result = await db.execute(
-                select(TestRunNode)
-                .where(
+                select(TestRunNode).where(
                     TestRunNode.test_run_id == run_id,
                     TestRunNode.status == "failed",
                 )
             )
             failed_nodes = result.scalars().all()
-
             if not failed_nodes:
                 return {"success": True, "message": "No failed nodes to retry"}
 
-            # Get run
-            result = await db.execute(
-                select(TestRun).where(TestRun.id == run_id)
-            )
+            result = await db.execute(select(TestRun).where(TestRun.id == run_id))
             run = result.scalar_one_or_none()
             if not run:
                 return {"success": False, "error": "Run not found"}
 
-            # Update run status
+            # Mock execution removed: can only retry real runs
+            if not (run.env_config or {}).get("use_real_runner"):
+                return {"success": False, "error": "Cannot retry: run was started without a device session"}
+
             run.status = "running"
             await db.commit()
 
@@ -886,12 +811,10 @@ def retry_failed_nodes(self, run_id: str) -> dict[str, Any]:
             passed = 0
 
             for node in failed_nodes:
-                # Increment attempt
                 node.attempt += 1
                 node.status = "running"
                 await db.commit()
 
-                # Get binding with test_case eagerly loaded
                 result = await db.execute(
                     select(FlowNodeBinding)
                     .options(selectinload(FlowNodeBinding.test_case))
@@ -903,28 +826,26 @@ def retry_failed_nodes(self, run_id: str) -> dict[str, Any]:
                 binding = result.scalar_one_or_none()
 
                 if binding:
-                    # Execute retry
-                    node_result = await _mock_execute_node(binding)
+                    # Re-execute failed node on the same session context
+                    exec_context = _build_execution_context(run, device=None, device_config=None)
+                    node_result = await _execute_node_with_appium(binding, exec_context)
                     node.status = node_result["status"]
                     node.duration_ms = node_result.get("duration_ms")
-                    
+                    node.error_message = node_result.get("error_message")
+                    node.error_code = node_result.get("error_code")
+
                     retried += 1
                     if node_result["status"] == "passed":
                         passed += 1
 
                 await db.commit()
 
-            # Update run summary
             run.status = "passed" if passed == retried else "partial"
             run.summary["retried_nodes"] = retried
             run.summary["retry_passed"] = passed
             await db.commit()
 
-            return {
-                "success": True,
-                "retried": retried,
-                "passed": passed,
-            }
+            return {"success": True, "retried": retried, "passed": passed}
 
     return asyncio.run(_retry())
 

@@ -4,6 +4,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
+from app.core.config import settings
 
 
 # =============================================================================
@@ -521,6 +522,7 @@ class TestStepResultResponse(TimestampSchema):
     status: str
     assertion_result: dict[str, Any]
     screenshot_object_key: Optional[str]
+    screenshot_url: Optional[str] = None
     raw_log_object_key: Optional[str]
     duration_ms: Optional[int]
 
@@ -625,8 +627,9 @@ class RiskScoreResponse(BaseModel):
 # App Package Schemas
 # =============================================================================
 
-# CDN 公开访问地址
-APP_PACKAGE_CDN_HOST = "https://alicn.timehutcdn.cn"
+def _public_object_url(object_key: str) -> str:
+    host = (settings.oss_url_scheme or "").rstrip("/")
+    return f"{host}/{object_key.lstrip('/')}" if host else object_key
 
 class AppPackageBase(BaseModel):
     """Base app package schema."""
@@ -694,8 +697,8 @@ class AppPackageUploadResponse(BaseModel):
             "supported_platforms": package.supported_platforms,
             "permissions": package.permissions,
             "extra_metadata": package.extra_metadata or {},
-            "download_url": f"{APP_PACKAGE_CDN_HOST}/{package.object_key}" if package.object_key else None,
-            "icon_url": f"{APP_PACKAGE_CDN_HOST}/{package.icon_object_key}" if package.icon_object_key else None,
+            "download_url": _public_object_url(package.object_key) if package.object_key else None,
+            "icon_url": _public_object_url(package.icon_object_key) if package.icon_object_key else None,
         }
         return cls(**data)
 
@@ -736,8 +739,8 @@ class AppPackageResponse(AppPackageUploadResponse, TimestampSchema):
             "supported_platforms": package.supported_platforms,
             "permissions": package.permissions,
             "extra_metadata": package.extra_metadata or {},
-            "download_url": f"{APP_PACKAGE_CDN_HOST}/{package.object_key}" if package.object_key else None,
-            "icon_url": f"{APP_PACKAGE_CDN_HOST}/{package.icon_object_key}" if package.icon_object_key else None,
+            "download_url": _public_object_url(package.object_key) if package.object_key else None,
+            "icon_url": _public_object_url(package.icon_object_key) if package.icon_object_key else None,
             "project_id": package.project_id,
             "tenant_id": package.tenant_id,
             "object_key": package.object_key,

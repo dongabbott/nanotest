@@ -42,6 +42,8 @@ from app.schemas.schemas import (
     TestStepResultResponse,
 )
 
+from app.core.config import settings
+
 router = APIRouter(tags=["Test Runs"])
 
 
@@ -462,16 +464,23 @@ async def get_test_run_detail(
             detail="Test run not found",
         )
 
+    public_host = (settings.oss_url_scheme or "").rstrip("/")
+
     # Build nodes with steps
     nodes_response = []
     for node in sorted(run.nodes, key=lambda n: n.created_at):
-        steps = [
-            TestStepResultResponse.model_validate(s)
-            for s in sorted(node.step_results, key=lambda s: s.step_index)
-        ]
+        steps = []
+        for s in sorted(node.step_results, key=lambda s: s.step_index):
+            step_resp = TestStepResultResponse.model_validate(s)
+            step_data = step_resp.model_dump()
+            if step_data.get("screenshot_object_key") and public_host:
+                step_data["screenshot_url"] = f"{public_host}/{step_data['screenshot_object_key']}"
+            steps.append(step_data)
+
         node_resp = TestRunNodeResponse.model_validate(node)
-        node_resp.steps = steps
-        nodes_response.append(node_resp)
+        node_data = node_resp.model_dump()
+        node_data["steps"] = steps
+        nodes_response.append(node_data)
 
     return TestRunDetailResponse(
         id=run.id,

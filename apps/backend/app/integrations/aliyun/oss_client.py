@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import urllib.parse
+from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from dataclasses import dataclass
@@ -93,10 +94,17 @@ class AliyunOSSClient:
         self._ensure_config()
         endpoint = self._config.endpoint
         bucket = self._config.bucket
-        
+
         # endpoint 格式可能是:
         # https://timehut-cn-sz.oss-cn-shenzhen.aliyuncs.com (已包含 bucket)
         # https://oss-cn-shenzhen.aliyuncs.com (需要拼接 bucket)
+        # CDN host (e.g. https://alicn.timehutcdn.cn) MUST NOT be used for signed PUT/DELETE.
+        if "timehutcdn.cn" in endpoint:
+            # If STS token service accidentally returns CDN endpoint, fall back to standard bucket endpoint.
+            # This assumes endpoint_without_bucket can be derived from the OSS region in the bucket endpoint.
+            # Best-effort: keep https and strip host to bucket default.
+            endpoint = "https://oss-cn-shenzhen.aliyuncs.com"
+
         if bucket in endpoint:
             return endpoint
         else:
@@ -202,7 +210,7 @@ class AliyunOSSClient:
         headers["Content-MD5"] = content_md5
         headers["Content-Length"] = str(len(data))
         
-        # 构建 URL
+        # 构建 URL (uploads must always use OSS host, never CDN)
         url = f"{self._get_oss_host()}/{full_key}"
         
         logger.info(f"Uploading to OSS: {full_key}, size: {len(data)} bytes")
