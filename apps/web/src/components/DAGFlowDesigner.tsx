@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import {
   Play,
   ZoomIn,
@@ -103,13 +104,34 @@ function FlowNodeComponent({
   const Icon = nodeType.icon;
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<Position | null>(null);
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  const connectOutRef = useRef<HTMLDivElement>(null);
+  const connectInRef = useRef<HTMLDivElement>(null);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     e.stopPropagation();
+
+    // If mousedown is on delete button or connect handles, do NOT start drag or select
+    const target = e.target as HTMLElement;
+    if (deleteRef.current?.contains(target)) return;
+    if (connectOutRef.current?.contains(target)) return;
+    if (connectInRef.current?.contains(target)) return;
+
     onSelect();
     setIsDragging(true);
     setDragStart({ x: e.clientX - node.position.x, y: e.clientY - node.position.y });
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    // If click is on delete button or connect handles, do nothing here
+    const target = e.target as HTMLElement;
+    if (deleteRef.current?.contains(target)) return;
+    if (connectOutRef.current?.contains(target)) return;
+    if (connectInRef.current?.contains(target)) return;
+
+    onSelect();
   };
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
@@ -159,6 +181,7 @@ function FlowNodeComponent({
         top: node.position.y,
         zIndex: isSelected ? 10 : 1,
       }}
+      onClick={handleClick}
       onMouseDown={handleMouseDown}
       onDoubleClick={(e) => { e.stopPropagation(); onEdit(); }}
     >
@@ -179,24 +202,34 @@ function FlowNodeComponent({
         <>
           {/* 输出连接点 (右侧) */}
           <div
+            ref={connectOutRef}
             className="absolute w-4 h-4 bg-blue-500 rounded-full cursor-crosshair hover:bg-blue-600 hover:scale-125 transition-transform"
             style={{ 
               right: node.type === 'start' || node.type === 'end' ? -6 : -8, 
               top: '50%', 
               transform: 'translateY(-50%)' 
             }}
-            onMouseDown={(e) => { e.stopPropagation(); onStartConnect(); }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              setIsDragging(false);
+              setDragStart(null);
+              onStartConnect();
+            }}
             title="拖拽创建连接"
           />
           {/* 输入连接点 (左侧) */}
           <div
+            ref={connectInRef}
             className="absolute w-4 h-4 bg-green-500 rounded-full cursor-pointer hover:bg-green-600 hover:scale-125 transition-transform"
             style={{ 
               left: node.type === 'start' || node.type === 'end' ? -6 : -8, 
               top: '50%', 
               transform: 'translateY(-50%)' 
             }}
-            onMouseUp={(e) => { e.stopPropagation(); onEndConnect(); }}
+            onMouseUp={(e) => {
+              e.stopPropagation();
+              onEndConnect();
+            }}
             title="连接到此节点"
           />
         </>
@@ -205,8 +238,12 @@ function FlowNodeComponent({
       {/* 删除按钮 */}
       {isSelected && node.type !== 'start' && node.type !== 'end' && (
         <button
-          className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600"
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          ref={deleteRef}
+          className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 z-50"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
         >
           <X size={12} />
         </button>
@@ -256,7 +293,14 @@ function FlowEdgeComponent({
   const midY = (source.y + target.y) / 2;
 
   return (
-    <g onClick={onSelect} className="cursor-pointer">
+    <g
+      onClick={(e) => {
+        // Prevent canvas click from clearing selection when selecting an edge.
+        e.stopPropagation();
+        onSelect();
+      }}
+      className="cursor-pointer"
+    >
       {/* 可点击区域 (更宽) */}
       <path
         d={pathD}
@@ -287,12 +331,22 @@ function FlowEdgeComponent({
       {/* 删除按钮 */}
       {isSelected && (
         <g
-          transform={`translate(${midX - 10}, ${midY - 10})`}
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          transform={`translate(${midX - 12}, ${midY - 12})`}
+          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={(e) => {
+            // Ensure delete click isn't swallowed by parent selection handler
+            e.preventDefault();
+            e.stopPropagation();
+            onDelete();
+          }}
+          style={{ pointerEvents: 'all' }}
           className="cursor-pointer"
         >
-          <circle r={10} cx={10} cy={10} fill="#EF4444" />
-          <text x={10} y={14} textAnchor="middle" fill="white" fontSize={14}>×</text>
+          {/* larger hit area */}
+          <rect x={0} y={0} width={24} height={24} fill="transparent" />
+          <circle r={10} cx={12} cy={12} fill="#EF4444" />
+          <text x={12} y={16} textAnchor="middle" fill="white" fontSize={14}>×</text>
         </g>
       )}
     </g>
@@ -420,16 +474,16 @@ function NodeEditModal({
           </div>
         </div>
 
-        <div className="flex gap-3 px-6 py-4 border-t bg-gray-50">
+        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t">
           <button
             onClick={onClose}
-            className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100"
+            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
           >
             取消
           </button>
           <button
             onClick={handleSave}
-            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
             保存
           </button>
@@ -462,12 +516,32 @@ export default function DAGFlowDesigner({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
+  const [connectingToPos, setConnectingToPos] = useState<Position | null>(null);
   const [editingNode, setEditingNode] = useState<FlowNode | null>(null);
   const [viewMode, setViewMode] = useState<'design' | 'code'>('design');
   const [zoom, setZoom] = useState(1);
   const [copied, setCopied] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  const getNodeCenter = useCallback((nodeId: string): Position | null => {
+    const n = flow.nodes.find(x => x.id === nodeId);
+    if (!n) return null;
+    const w = n.type === 'start' || n.type === 'end' ? 48 : NODE_WIDTH;
+    const h = n.type === 'start' || n.type === 'end' ? 48 : NODE_HEIGHT;
+    return { x: n.position.x + w / 2, y: n.position.y + h / 2 };
+  }, [flow.nodes]);
+
+  const getMousePosInCanvas = useCallback((e: MouseEvent | ReactMouseEvent, canvas: HTMLDivElement) => {
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'clientX' in e ? e.clientX : 0;
+    const clientY = 'clientY' in e ? e.clientY : 0;
+    return {
+      x: (clientX - rect.left) / zoom,
+      y: (clientY - rect.top) / zoom,
+    };
+  }, [zoom]);
 
   // 更新流程
   const updateFlow = useCallback((updates: Partial<FlowDefinition>) => {
@@ -499,19 +573,59 @@ export default function DAGFlowDesigner({
   // 删除节点
   const deleteNode = useCallback((nodeId: string) => {
     if (nodeId === 'start' || nodeId === 'end') return;
+    setConnectingFrom(null);
+    setConnectingToPos(null);
     updateFlow({
       nodes: flow.nodes.filter(n => n.id !== nodeId),
       edges: flow.edges.filter(e => e.source !== nodeId && e.target !== nodeId),
     });
     setSelectedNodeId(null);
-  }, [flow, updateFlow]);
+  }, [flow.edges, flow.nodes, updateFlow]);
+
+  // 删除连线
+  const deleteEdge = useCallback((edgeId: string) => {
+    setConnectingFrom(null);
+    setConnectingToPos(null);
+    updateFlow({ edges: flow.edges.filter(e => e.id !== edgeId) });
+    setSelectedEdgeId(null);
+  }, [flow.edges, updateFlow]);
 
   // 添加连线
   const addEdge = useCallback((source: string, target: string) => {
     if (source === target) return;
-    // 检查是否已存在
+
+    // 查找源节点和目标节点
+    const sourceNode = flow.nodes.find(n => n.id === source);
+    const targetNode = flow.nodes.find(n => n.id === target);
+    if (!sourceNode || !targetNode) return;
+
+    // 规则：不允许从"结束"节点发出连线
+    if (sourceNode.type === 'end') {
+      setWarning('结束节点不能作为连线起点');
+      setTimeout(() => setWarning(null), 2000);
+      return;
+    }
+
+    // 规则：不允许连入"开始"节点
+    if (targetNode.type === 'start') {
+      setWarning('开始节点不能作为连线终点');
+      setTimeout(() => setWarning(null), 2000);
+      return;
+    }
+
+    // 规则：开始和结束之间不能直接连线
+    if (sourceNode.type === 'start' && targetNode.type === 'end') {
+      setWarning('开始和结束之间不能直接连线，请添加测试用例节点');
+      setTimeout(() => setWarning(null), 2000);
+      return;
+    }
+
     const exists = flow.edges.some(e => e.source === source && e.target === target);
-    if (exists) return;
+    if (exists) {
+      setWarning('该连线已存在');
+      setTimeout(() => setWarning(null), 2000);
+      return;
+    }
 
     const newEdge: FlowEdge = {
       id: generateEdgeId(),
@@ -519,17 +633,12 @@ export default function DAGFlowDesigner({
       target,
     };
     updateFlow({ edges: [...flow.edges, newEdge] });
-  }, [flow.edges, updateFlow]);
-
-  // 删除连线
-  const deleteEdge = useCallback((edgeId: string) => {
-    updateFlow({ edges: flow.edges.filter(e => e.id !== edgeId) });
-    setSelectedEdgeId(null);
-  }, [flow.edges, updateFlow]);
+  }, [flow.nodes, flow.edges, updateFlow]);
 
   // 开始连接
   const startConnect = useCallback((nodeId: string) => {
     setConnectingFrom(nodeId);
+    setConnectingToPos(null);
   }, []);
 
   // 结束连接
@@ -538,16 +647,45 @@ export default function DAGFlowDesigner({
       addEdge(connectingFrom, targetId);
     }
     setConnectingFrom(null);
+    setConnectingToPos(null);
   }, [connectingFrom, addEdge]);
 
-  // 画布点击
-  const handleCanvasClick = useCallback(() => {
-    setSelectedNodeId(null);
-    setSelectedEdgeId(null);
+  const cancelConnect = useCallback(() => {
     setConnectingFrom(null);
+    setConnectingToPos(null);
   }, []);
 
-  // 生成 JSON
+  useEffect(() => {
+    if (!connectingFrom) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onMove = (evt: MouseEvent) => {
+      setConnectingToPos(getMousePosInCanvas(evt, canvas));
+    };
+    const onKeyDown = (evt: KeyboardEvent) => {
+      if (evt.key === 'Escape') cancelConnect();
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [connectingFrom, cancelConnect, getMousePosInCanvas]);
+
+  const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    // Clicking blank canvas clears selection; when connecting, it cancels connect.
+    if (e.target !== e.currentTarget) return;
+    if (connectingFrom) {
+      cancelConnect();
+      return;
+    }
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+  }, [connectingFrom, cancelConnect]);
+
   const flowJson = useMemo(() => {
     const output = {
       name: flow.name,
@@ -566,24 +704,20 @@ export default function DAGFlowDesigner({
     return JSON.stringify(output, null, 2);
   }, [flow]);
 
-  // 复制
   const copyToClipboard = async () => {
     await navigator.clipboard.writeText(flowJson);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // 缩放控制
   const handleZoom = (delta: number) => {
     setZoom(z => Math.min(Math.max(z + delta, 0.5), 2));
   };
 
   return (
     <div className="h-full flex flex-col bg-white rounded-xl border border-gray-200 overflow-hidden">
-      {/* 工具栏 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
         <div className="flex items-center gap-4">
-          {/* 视图切换 */}
           <div className="flex bg-gray-200 rounded-lg p-0.5">
             <button
               onClick={() => setViewMode('design')}
@@ -605,7 +739,6 @@ export default function DAGFlowDesigner({
             </button>
           </div>
 
-          {/* 节点工具箱 */}
           {viewMode === 'design' && (
             <div className="flex items-center gap-1 ml-4">
               <span className="text-sm text-gray-500 mr-2">添加节点:</span>
@@ -628,7 +761,6 @@ export default function DAGFlowDesigner({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* 缩放控制 */}
           {viewMode === 'design' && (
             <div className="flex items-center gap-1 mr-4">
               <button onClick={() => handleZoom(-0.1)} className="p-1.5 hover:bg-gray-200 rounded">
@@ -654,7 +786,6 @@ export default function DAGFlowDesigner({
         </div>
       </div>
 
-      {/* 主内容区域 */}
       <div className="flex-1 overflow-hidden">
         {viewMode === 'design' ? (
           <div
@@ -666,7 +797,6 @@ export default function DAGFlowDesigner({
             }}
             onClick={handleCanvasClick}
           >
-            {/* SVG 层 - 连线 */}
             <svg
               className="absolute inset-0 pointer-events-none"
               style={{
@@ -706,15 +836,39 @@ export default function DAGFlowDesigner({
                   );
                 })}
               </g>
+
+              {connectingFrom && (
+                (() => {
+                  const from = getNodeCenter(connectingFrom);
+                  const to = connectingToPos;
+                  if (!from || !to) return null;
+                  const dx = to.x - from.x;
+                  const controlOffset = Math.min(Math.abs(dx) / 2, 120);
+                  const d = `M ${from.x} ${from.y} C ${from.x + controlOffset} ${from.y}, ${to.x - controlOffset} ${to.y}, ${to.x} ${to.y}`;
+                  return (
+                    <path
+                      d={d}
+                      fill="none"
+                      stroke="#2563EB"
+                      strokeWidth={2}
+                      strokeDasharray="6 6"
+                      opacity={0.9}
+                    />
+                  );
+                })()
+              )}
             </svg>
 
-            {/* 节点层 */}
             <div
               style={{
                 transform: `scale(${zoom})`,
                 transformOrigin: 'top left',
                 width: '2000px',
                 height: '1000px',
+              }}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) return;
+                e.stopPropagation();
               }}
             >
               {flow.nodes.map(node => (
@@ -723,7 +877,16 @@ export default function DAGFlowDesigner({
                   node={node}
                   isSelected={selectedNodeId === node.id}
                   isConnecting={connectingFrom !== null && connectingFrom !== node.id}
-                  onSelect={() => { setSelectedNodeId(node.id); setSelectedEdgeId(null); }}
+                  onSelect={() => {
+                    // Only treat a node click as "complete connection" when user is in connect mode.
+                    // Otherwise, normal select should work (so delete button can show).
+                    if (connectingFrom) {
+                      if (connectingFrom !== node.id) endConnect(node.id);
+                      return;
+                    }
+                    setSelectedNodeId(node.id);
+                    setSelectedEdgeId(null);
+                  }}
                   onMove={(pos) => updateNode(node.id, { position: pos })}
                   onStartConnect={() => startConnect(node.id)}
                   onEndConnect={() => endConnect(node.id)}
@@ -733,10 +896,16 @@ export default function DAGFlowDesigner({
               ))}
             </div>
 
-            {/* 连接提示 */}
             {connectingFrom && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm shadow-lg">
-                点击目标节点的绿色连接点完成连接，或点击空白处取消
+                连线中：点击目标节点完成连接，按 ESC 或点击空白处取消
+              </div>
+            )}
+
+            {/* 非法连线警告提示 */}
+            {warning && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm shadow-lg animate-pulse">
+                {warning}
               </div>
             )}
           </div>
@@ -749,7 +918,6 @@ export default function DAGFlowDesigner({
         )}
       </div>
 
-      {/* 底部信息栏 */}
       <div className="flex items-center justify-between px-4 py-2 border-t border-gray-200 bg-gray-50 text-sm text-gray-600">
         <div className="flex items-center gap-4">
           <span>节点: {flow.nodes.length}</span>
@@ -760,7 +928,6 @@ export default function DAGFlowDesigner({
         </div>
       </div>
 
-      {/* 节点编辑弹窗 */}
       {editingNode && (
         <NodeEditModal
           node={editingNode}
