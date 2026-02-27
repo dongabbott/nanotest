@@ -27,6 +27,7 @@ class StepResult:
     ended_at: Optional[datetime] = None
     duration_ms: Optional[int] = None
     screenshot_path: Optional[str] = None
+    page_source_path: Optional[str] = None
     error_message: Optional[str] = None
     error_code: Optional[str] = None
     element_found: bool = True

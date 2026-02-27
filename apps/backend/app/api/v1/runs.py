@@ -476,6 +476,8 @@ async def get_test_run_detail(
             step_data = step_resp.model_dump()
             if step_data.get("screenshot_object_key") and public_host:
                 step_data["screenshot_url"] = f"{public_host}/{step_data['screenshot_object_key']}"
+            if step_data.get("page_source_object_key") and public_host:
+                step_data["page_source_url"] = f"{public_host}/{step_data['page_source_object_key']}"
             steps.append(step_data)
 
         node_resp = TestRunNodeResponse.model_validate(node)

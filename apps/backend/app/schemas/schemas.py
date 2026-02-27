@@ -523,6 +523,8 @@ class TestStepResultResponse(TimestampSchema):
     assertion_result: dict[str, Any]
     screenshot_object_key: Optional[str]
     screenshot_url: Optional[str] = None
+    page_source_object_key: Optional[str] = None
+    page_source_url: Optional[str] = None
     raw_log_object_key: Optional[str]
     duration_ms: Optional[int]
 

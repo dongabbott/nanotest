@@ -418,6 +418,7 @@ class TestStepResult(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending, success, failed
     assertion_result: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     screenshot_object_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    page_source_object_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     raw_log_object_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 

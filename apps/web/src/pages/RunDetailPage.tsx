@@ -122,7 +122,7 @@ function StepRow({ step, index }: { step: any; index: number }) {
   const screenshotCaptureMs = typeof meta.screenshot_capture_ms === 'number' ? meta.screenshot_capture_ms : null;
   const screenshotUploadMs = typeof meta.screenshot_upload_ms === 'number' ? meta.screenshot_upload_ms : null;
 
-  const hasDetail = step.error_message || step.assertion_result?.expected || step.screenshot_object_key ||
+  const hasDetail = step.error_message || step.assertion_result?.expected || step.screenshot_object_key || step.page_source_object_key ||
     (step.input_payload && Object.keys(step.input_payload).length > 0) ||
     screenshotCaptureMs != null || screenshotUploadMs != null;
 
@@ -256,6 +256,24 @@ function StepRow({ step, index }: { step: any; index: number }) {
               >
                 {openingScreenshot ? '打开中...' : '查看'}
               </button>
+            </div>
+          )}
+
+          {/* Page Source XML */}
+          {step.page_source_object_key && (
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <FileText size={14} />
+              <span>页面源码：</span>
+              <CopyText text={step.page_source_object_key} />
+              <a
+                href={step.page_source_url || '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className={`ml-1 px-2 py-0.5 border border-gray-300 rounded hover:bg-gray-50 text-blue-600 hover:text-blue-800 ${!step.page_source_url ? 'pointer-events-none opacity-50' : ''}`}
+              >
+                查看 XML
+              </a>
             </div>
           )}
 
@@ -807,9 +825,7 @@ export default function RunDetailPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-gray-700">节点通过率</span>
-            <span className="text-sm font-bold text-gray-900">
-              {Math.round((passedNodes / totalNodes) * 100)}%
-            </span>
+            <span className="text-sm font-bold text-gray-900">{Math.round((passedNodes / totalNodes) * 100)}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
             <div className="h-full flex">

@@ -145,6 +145,45 @@ class AppiumRunner(BaseRunner):
             logger.warning(f"Failed to upload screenshot to OSS: {e}")
             return None
 
+    async def _upload_page_source(
+        self,
+        page_source: str,
+        step_index: int,
+        label: str = "",
+    ) -> Optional[str]:
+        """Upload page source XML to Aliyun OSS and return the object key.
+
+        Path format mirrors screenshots:
+          page_sources/{self.context.run_id}/step{step_index}_{label}_{timestamp}.xml
+        """
+        try:
+            from app.integrations.aliyun.oss_client import get_oss_client
+
+            if self._oss_client is None:
+                self._oss_client = get_oss_client()
+
+            timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")[:-3]
+            suffix = f"_{label}" if label else ""
+            object_key = (
+                f"page_sources/{self.context.run_id}/"
+                f"step{step_index}{suffix}_{timestamp}.xml"
+            )
+
+            xml_bytes = page_source.encode("utf-8")
+            loop = asyncio.get_event_loop()
+            full_key = await loop.run_in_executor(
+                None,
+                lambda: self._oss_client.upload_bytes(
+                    object_key, xml_bytes, "text/xml"
+                ),
+            )
+            logger.info(f"Page source uploaded: {full_key}")
+            return full_key
+
+        except Exception as e:
+            logger.warning(f"Failed to upload page source to OSS: {e}")
+            return None
+
     async def get_page_source(self) -> Optional[str]:
         """Get the current page source."""
         if not self._client:
@@ -228,6 +267,7 @@ class AppiumRunner(BaseRunner):
             if should_capture:
                 capture_started = datetime.utcnow()
                 screenshot = await self.take_screenshot()
+                page_source = await self.get_page_source()
                 capture_ended = datetime.utcnow()
                 result.metadata["screenshot_capture_ms"] = int(
                     (capture_ended - capture_started).total_seconds() * 1000
@@ -252,6 +292,21 @@ class AppiumRunner(BaseRunner):
                     result.metadata["screenshot_upload_ms"] = int(
                         (upload_ended - upload_started).total_seconds() * 1000
                     )
+
+                # Upload page source XML (paired with screenshot)
+                if page_source:
+                    try:
+                        ps_upload_started = datetime.utcnow()
+                        label = result.status.value
+                        result.page_source_path = await self._upload_page_source(
+                            page_source, step.index, label
+                        )
+                        ps_upload_ended = datetime.utcnow()
+                        result.metadata["page_source_upload_ms"] = int(
+                            (ps_upload_ended - ps_upload_started).total_seconds() * 1000
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to save page source: {e}")
 
         return result
 

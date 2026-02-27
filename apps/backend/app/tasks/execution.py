@@ -479,6 +479,7 @@ async def _execute_flow_with_dag(
                     "actual": s.actual_value,
                 },
                 screenshot_object_key=s.screenshot_path,
+                page_source_object_key=s.page_source_path,
                 duration_ms=s.duration_ms,
             )
             db.add(step_record)
@@ -577,6 +578,7 @@ async def _execute_nodes_with_runner(
                     status=step_result["status"],
                     assertion_result=step_result.get("assertion_result", {}),
                     screenshot_object_key=step_result.get("screenshot_path"),
+                    page_source_object_key=step_result.get("page_source_path"),
                     duration_ms=step_result.get("duration_ms"),
                 )
                 db.add(step_record)
@@ -704,6 +706,7 @@ async def _execute_node_with_appium(
                     "duration_ms": s.duration_ms,
                     "error_message": s.error_message,
                     "screenshot_path": s.screenshot_path,
+                    "page_source_path": s.page_source_path,
                     "input_payload": {"value": s.actual_value, "metadata": s.metadata},
                     "assertion_result": {
                         "expected": s.expected_value,
