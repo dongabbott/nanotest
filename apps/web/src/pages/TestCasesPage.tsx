@@ -219,7 +219,21 @@ function TestCaseEditorModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      onMouseDown={(e) => {
+        // Only close when clicking the backdrop itself (not children/portals).
+        if (e.target === e.currentTarget) {
+          e.stopPropagation();
+          onClose();
+          resetForm();
+        }
+      }}
+      onClick={(e) => {
+        // Avoid click bubbling from nested portals triggering anything on the backdrop.
+        e.stopPropagation();
+      }}
+    >
       <div
         className={`bg-white rounded-xl shadow-xl overflow-hidden flex flex-col transition-all duration-300 ${
           showInspector ? 'w-[95vw] h-[95vh] max-w-none' : 'w-full max-w-4xl max-h-[90vh]'

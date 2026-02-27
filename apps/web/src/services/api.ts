@@ -292,6 +292,11 @@ export const packagesApi = {
     apiClient.get(`/api/v1/packages/by-name/${encodeURIComponent(packageName)}`),
 };
 
+// DSL API
+export const dslApi = {
+  listGenerators: () => apiClient.get('/api/v1/dsl/generators'),
+};
+
 // Tasks API
 export const tasksApi = {
   getStatus: (taskId: string) => apiClient.get(`/api/v1/tasks/${taskId}`),

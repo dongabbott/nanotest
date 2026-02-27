@@ -24,7 +24,9 @@ import {
   ChevronsUpDown,
   Search,
   Keyboard,
+  Wand2,
 } from 'lucide-react';
+import { dslApi } from '../services/api';
 
 // ============ 类型定义 ============
 
@@ -235,6 +237,137 @@ function SelectorEditor({
   );
 }
 
+// ============ 生成器选择器 ============
+
+type GeneratorMeta = {
+  id: string;
+  signature: string;
+  description?: string;
+  examples?: string[];
+};
+
+function insertAtCursorTextArea(input: HTMLTextAreaElement, text: string) {
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  const next = input.value.slice(0, start) + text + input.value.slice(end);
+  input.value = next;
+  const pos = start + text.length;
+  input.setSelectionRange(pos, pos);
+}
+
+function GeneratorPicker({
+  open,
+  onClose,
+  onPick,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onPick: (example: string) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [items, setItems] = useState<GeneratorMeta[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setError(null);
+      const res = await dslApi.listGenerators();
+      setItems(res.data?.items || []);
+      setLoaded(true);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e?.message || '加载生成器失败');
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    if (loaded) return;
+    load();
+  }, [open, loaded, load]);
+
+  const filtered = React.useMemo(() => {
+    const query = q.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((it) => {
+      const hay = `${it.id} ${it.signature} ${it.description || ''} ${(it.examples || []).join(' ')}`.toLowerCase();
+      return hay.includes(query);
+    });
+  }, [q, items]);
+
+  if (!open) return null;
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" onMouseDown={onClose}>
+      <div
+        className="bg-white w-full max-w-2xl rounded-xl border border-gray-200 shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+          <div className="font-semibold text-gray-900">插入内置生成器</div>
+          <button className="text-gray-400 hover:text-gray-700" onClick={onClose} type="button">
+            ×
+          </button>
+        </div>
+
+        <div className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="relative flex-1">
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                placeholder="搜索：random_email / uuid / now..."
+              />
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            </div>
+            <button type="button" onClick={load} className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+              刷新
+            </button>
+          </div>
+
+          {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{error}</div>}
+
+          <div className="max-h-[420px] overflow-auto space-y-2">
+            {filtered.map((g) => (
+              <div key={g.id} className="border border-gray-200 rounded-lg p-3 hover:bg-gray-50">
+                <div>
+                  <div className="font-mono text-sm text-gray-900">{g.signature}</div>
+                  {g.description && <div className="text-xs text-gray-500 mt-1">{g.description}</div>}
+                </div>
+                {(g.examples || []).length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(g.examples || []).map((ex) => (
+                      <button
+                        key={ex}
+                        type="button"
+                        onClick={() => onPick(ex)}
+                        className="px-2 py-1 text-xs font-mono bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100"
+                        title="点击插入"
+                      >
+                        {ex}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {loaded && filtered.length === 0 && (
+              <div className="text-sm text-gray-500 text-center py-10">未找到匹配的生成器</div>
+            )}
+          </div>
+
+          <div className="text-xs text-gray-500 mt-3">
+            语法：在输入值中使用 <code className="font-mono">${'{'}...{'}'}</code>，例如 <code className="font-mono">${'{'}random_email(){'}'}</code>。
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ============ 步骤编辑器 ============
 
 function StepEditor({
@@ -244,6 +377,9 @@ function StepEditor({
   action: Action;
   onChange: (action: Action) => void;
 }) {
+  const [showGeneratorPicker, setShowGeneratorPicker] = useState(false);
+  const typeTextRef = useRef<HTMLTextAreaElement>(null);
+
   const renderFields = () => {
     switch (action.type) {
       case 'tap':
@@ -323,12 +459,40 @@ function StepEditor({
             />
             <div>
               <label className="block text-xs text-gray-500 mb-1">输入文本</label>
-              <textarea
-                value={action.text}
-                onChange={(e) => onChange({ ...action, text: e.target.value })}
-                rows={2}
-                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="要输入的文本内容，支持变量 ${变量名}"
+              <div className="relative">
+                <textarea
+                  ref={typeTextRef}
+                  value={action.text}
+                  onChange={(e) => onChange({ ...action, text: e.target.value })}
+                  rows={2}
+                  className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 pr-8"
+                  placeholder="要输入的文本内容，支持变量 ${变量名} / 内置生成器 ${random_email()} ${random_phone()} ${random_text(10)} ${uuid()} ${now(%Y%m%d)}"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-2 text-gray-400 hover:text-blue-600"
+                  title="插入内置生成器"
+                  onClick={() => setShowGeneratorPicker(true)}
+                >
+                  <Wand2 size={14} />
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1">
+                变量：${'{'}name{'}'}；内置：${'{'}random_email(){'}'}、${'{'}random_phone(){'}'}、${'{'}random_text(10){'}'}、${'{'}uuid(){'}'}、${'{'}now(%Y%m%d%H%M%S){'}'}
+              </p>
+              <GeneratorPicker
+                open={showGeneratorPicker}
+                onClose={() => setShowGeneratorPicker(false)}
+                onPick={(example) => {
+                  const el = typeTextRef.current;
+                  if (el) {
+                    insertAtCursorTextArea(el, example);
+                    onChange({ ...action, text: el.value });
+                  } else {
+                    onChange({ ...action, text: (action.text || '') + example });
+                  }
+                  setShowGeneratorPicker(false);
+                }}
               />
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
@@ -1138,12 +1302,12 @@ export default function TestCaseStepDesigner({
             <button
               onClick={handleExpandAll}
               className="p-1.5 hover:bg-gray-100 rounded text-gray-500"
-              title={expandedSteps.size === dsl.steps.length ? "折叠所有" : "展开所有"}
+              title={expandedSteps.size === dsl.steps.length ? '折叠所有' : '展开所有'}
             >
               <ChevronsUpDown size={16} />
             </button>
           </div>
-          
+
           <div className="flex items-center gap-2">
             {selectedSteps.size > 0 && (
               <>
@@ -1227,7 +1391,10 @@ export default function TestCaseStepDesigner({
                 />
                 {/* 插入点 */}
                 <button
-                  onClick={() => { setInsertAfterIndex(index); setShowAddModal(true); }}
+                  onClick={() => {
+                    setInsertAfterIndex(index);
+                    setShowAddModal(true);
+                  }}
                   className="w-full py-1 text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors opacity-0 hover:opacity-100"
                 >
                   <Plus size={12} className="inline mr-1" />
@@ -1243,7 +1410,10 @@ export default function TestCaseStepDesigner({
       {dsl.steps.length > 0 && (
         <div className="mt-3 pt-3 border-t border-gray-200">
           <button
-            onClick={() => { setInsertAfterIndex(null); setShowAddModal(true); }}
+            onClick={() => {
+              setInsertAfterIndex(null);
+              setShowAddModal(true);
+            }}
             className="flex items-center justify-center gap-2 w-full px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
           >
             <Plus size={18} />
@@ -1255,7 +1425,10 @@ export default function TestCaseStepDesigner({
       {/* 添加步骤弹窗 */}
       <AddStepModal
         isOpen={showAddModal}
-        onClose={() => { setShowAddModal(false); setInsertAfterIndex(null); }}
+        onClose={() => {
+          setShowAddModal(false);
+          setInsertAfterIndex(null);
+        }}
         onAdd={(type) => handleAddStep(type, insertAfterIndex !== null ? insertAfterIndex : undefined)}
         insertIndex={insertAfterIndex}
       />

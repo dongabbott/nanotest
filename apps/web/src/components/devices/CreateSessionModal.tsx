@@ -86,6 +86,7 @@ export function CreateSessionModal({ isOpen, onClose, devices }: CreateSessionMo
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     if (!selectedDevice) {
       setError('请选择设备');
       return;
@@ -122,8 +123,18 @@ export function CreateSessionModal({ isOpen, onClose, devices }: CreateSessionMo
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      onClick={(e) => {
+        e.stopPropagation();
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-white">
           <h2 className="text-lg font-semibold text-gray-900">创建 Appium Session</h2>
           <button onClick={() => { onClose(); resetForm(); }} className="text-gray-400 hover:text-gray-600">
@@ -131,7 +142,12 @@ export function CreateSessionModal({ isOpen, onClose, devices }: CreateSessionMo
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <form
+          onSubmit={handleSubmit}
+          className="p-6 space-y-5"
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
           {error && (
             <div className="bg-red-50 text-red-600 px-4 py-3 rounded-lg text-sm">{error}</div>
           )}
@@ -268,6 +284,8 @@ export function CreateSessionModal({ isOpen, onClose, devices }: CreateSessionMo
             </button>
             <button
               type="submit"
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
               disabled={createSessionMutation.isPending || availableDevices.length === 0}
               className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
             >

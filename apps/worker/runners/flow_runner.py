@@ -512,12 +512,16 @@ def _normalize_action(step_data: dict) -> str:
     """Normalize action name from DSL step."""
     action = step_data.get("action") or step_data.get("type") or "unknown"
 
+    # DSLEditor uses 'wait_for'
+    if action == "wait_for":
+        return "wait_for_element"
+
     if action == "assert":
         condition = step_data.get("condition", "exists")
         mapping = {
             "exists": "assert_exists",
             "not_exists": "assert_not_exists",
-            "visible": "assert_exists",
+            "visible": "assert_visible",
             "text_equals": "assert_text",
             "text_contains": "assert_contains",
             "enabled": "assert_exists",

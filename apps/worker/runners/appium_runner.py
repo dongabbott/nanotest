@@ -26,6 +26,8 @@ class AppiumRunner(BaseRunner):
     ACTIONS = {
         "tap": "_action_tap",
         "click": "_action_tap",
+        "double_tap": "_action_double_tap",
+        "scroll": "_action_scroll",
         "input": "_action_input",
         "type": "_action_input",
         "clear": "_action_clear",
@@ -36,14 +38,20 @@ class AppiumRunner(BaseRunner):
         "back": "_action_back",
         "home": "_action_home",
         "wait": "_action_wait",
+        "wait_for": "_action_wait_for_element",
         "wait_for_element": "_action_wait_for_element",
+        "wait_invisible": "_action_wait_invisible",
         "assert_exists": "_action_assert_exists",
         "assert_not_exists": "_action_assert_not_exists",
+        "assert_visible": "_action_assert_visible",
         "assert_text": "_action_assert_text",
         "assert_contains": "_action_assert_contains",
         "launch_app": "_action_launch_app",
         "close_app": "_action_close_app",
         "screenshot": "_action_screenshot",
+        "tap_xy": "_action_tap_xy",
+        "hide_keyboard": "_action_hide_keyboard",
+        "reset_app": "_action_reset_app",
     }
 
     def __init__(self, context: ExecutionContext):
@@ -361,6 +369,17 @@ class AppiumRunner(BaseRunner):
         self._client.tap(step.locator_type, step.locator_value)
         return {}
 
+    def _action_double_tap(self, step: TestStep) -> dict[str, Any]:
+        """Double-tap on an element."""
+        self._client.double_tap(step.locator_type, step.locator_value)
+        return {}
+
+    def _action_scroll(self, step: TestStep) -> dict[str, Any]:
+        """Scroll the screen (up/down)."""
+        direction = (step.input_value or step.metadata.get("direction") or "down")
+        self._client.scroll(str(direction))
+        return {}
+
     def _action_input(self, step: TestStep) -> dict[str, Any]:
         """Input text into an element."""
         text = self._resolve_variable(step.input_value)
@@ -426,6 +445,12 @@ class AppiumRunner(BaseRunner):
         )
         return {}
 
+    def _action_wait_invisible(self, step: TestStep) -> dict[str, Any]:
+        """Wait until an element disappears."""
+        timeout = int(step.input_value) if (step.input_value and str(step.input_value).isdigit()) else step.timeout
+        self._client.wait_invisible(step.locator_type, step.locator_value, timeout)
+        return {"actual_value": "invisible"}
+
     def _action_assert_exists(self, step: TestStep) -> dict[str, Any]:
         """Assert that an element exists."""
         exists = self._client.element_exists(step.locator_type, step.locator_value)
@@ -444,10 +469,16 @@ class AppiumRunner(BaseRunner):
             )
         return {"actual_value": "not_exists"}
 
+    def _action_assert_visible(self, step: TestStep) -> dict[str, Any]:
+        """Assert that an element is visible."""
+        # Prefer explicit visible wait
+        self._client.wait_for_visible(step.locator_type, step.locator_value, step.timeout)
+        return {"actual_value": "visible"}
+
     def _action_assert_text(self, step: TestStep) -> dict[str, Any]:
         """Assert that an element has specific text."""
         actual = self._client.get_element_text(step.locator_type, step.locator_value)
-        expected = self._resolve_variable(step.expected_value)
+        expected = self._resolve_variable(step.expected_value or step.input_value)
         if actual != expected:
             raise AssertionError(
                 f"Text mismatch: expected '{expected}', got '{actual}'"
@@ -457,7 +488,7 @@ class AppiumRunner(BaseRunner):
     def _action_assert_contains(self, step: TestStep) -> dict[str, Any]:
         """Assert that an element's text contains a substring."""
         actual = self._client.get_element_text(step.locator_type, step.locator_value)
-        expected = self._resolve_variable(step.expected_value)
+        expected = self._resolve_variable(step.expected_value or step.input_value)
         if expected not in actual:
             raise AssertionError(
                 f"Text does not contain '{expected}': got '{actual}'"
@@ -476,9 +507,30 @@ class AppiumRunner(BaseRunner):
         self._client.close_app(app_id)
         return {}
 
+    def _action_reset_app(self, step: TestStep) -> dict[str, Any]:
+        """Reset/restart the app."""
+        self._client.reset_app()
+        return {}
+
     def _action_screenshot(self, step: TestStep) -> dict[str, Any]:
         """Take a screenshot (explicitly requested)."""
         # Screenshot will be taken by the step execution flow
+        return {}
+
+    def _action_tap_xy(self, step: TestStep) -> dict[str, Any]:
+        """Tap at coordinates provided as 'x,y'."""
+        raw = (step.input_value or '').strip()
+        if not raw or ',' not in raw:
+            raise ValueError("tap_xy requires value in format 'x,y'")
+        xs, ys = raw.split(',', 1)
+        x = int(float(xs.strip()))
+        y = int(float(ys.strip()))
+        self._client.tap_xy(x, y)
+        return {"actual_value": f"{x},{y}"}
+
+    def _action_hide_keyboard(self, step: TestStep) -> dict[str, Any]:
+        """Hide the on-screen keyboard."""
+        self._client.hide_keyboard()
         return {}
 
     # ==========================================================================
@@ -486,13 +538,55 @@ class AppiumRunner(BaseRunner):
     # ==========================================================================
 
     def _resolve_variable(self, value: Optional[str]) -> str:
-        """Resolve variable references in a value."""
+        """Resolve variable references and dynamic generators in a value.
+
+        Supported:
+          - ${var}: context variable replacement
+          - ${random_email()}, ${random_phone()}, ${random_text(n)}, ${uuid()}
+          - ${now(fmt)}: datetime in UTC, fmt like %Y%m%d%H%M%S
+
+        Notes:
+          - This is a lightweight expression system, not a full eval.
+        """
         if not value:
             return ""
-        if value.startswith("${") and value.endswith("}"):
-            var_name = value[2:-1]
-            return str(self.context.variables.get(var_name, value))
-        return value
+
+        text = str(value)
+
+        # Fast path: exactly one ${...}
+        if text.startswith("${") and text.endswith("}"):
+            expr = text[2:-1].strip()
+            return str(self._eval_expr(expr))
+
+        # Replace all ${...} occurrences inside the string
+        import re
+
+        def repl(m: re.Match) -> str:
+            expr = m.group(1).strip()
+            try:
+                return str(self._eval_expr(expr))
+            except Exception:
+                return m.group(0)
+
+        return re.sub(r"\$\{([^}]+)\}", repl, text)
+
+    def _eval_expr(self, expr: str) -> Any:
+        """Evaluate a limited expression used in ${...}."""
+        import re
+        from runners.text_generators import eval_generator
+
+        expr = (expr or "").strip()
+
+        # variable
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
+            return self.context.variables.get(expr, "${" + expr + "}")
+
+        generated = eval_generator(expr)
+        if generated is not None:
+            return generated
+
+        # Fallback: return raw
+        return "${" + expr + "}"
 
     def _classify_error(self, error: Exception) -> str:
         """Classify an error into an error code."""

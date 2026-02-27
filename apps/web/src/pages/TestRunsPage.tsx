@@ -192,15 +192,21 @@ export default function TestRunsPage() {
   const preselectedFlowId = searchParams.get('flow') || undefined;
   const [isModalOpen, setIsModalOpen] = useState(!!preselectedFlowId);
 
+  const pageSize = 20;
+  const [page, setPage] = useState(1);
+
   const { data, isLoading } = useQuery({
-    queryKey: ['testRuns', projectId],
-    queryFn: () => testRunsApi.list(projectId!, 1, 50),
+    queryKey: ['testRuns', projectId, page, pageSize],
+    queryFn: () => testRunsApi.list(projectId!, page, pageSize) as any,
     enabled: !!projectId,
     refetchInterval: 5000,
     refetchOnMount: 'always',
+    placeholderData: (prev) => prev,
   });
 
-  const runs = data?.data?.items || [];
+  const runs: any[] = (data as any)?.data?.items || [];
+  const total: number = (data as any)?.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const statusConfig: Record<string, { icon: any; color: string; bg: string; label: string }> = {
     queued: { icon: Clock, color: 'text-gray-600', bg: 'bg-gray-100', label: '排队中' },
@@ -311,6 +317,31 @@ export default function TestRunsPage() {
               })}
             </tbody>
           </table>
+
+          {/* Pagination */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-6 py-4 border-t bg-gray-50">
+            <div className="text-xs text-gray-500">
+              共 {total} 条 · 第 {page} / {totalPages} 页
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-white disabled:opacity-50"
+              >
+                上一页
+              </button>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-white disabled:opacity-50"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
