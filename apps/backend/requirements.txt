@@ -36,6 +36,7 @@ androguard==3.3.5
 # Utilities
 structlog==24.1.0
 python-dotenv==1.0.0
+Faker==37.8.2
 
 # Testing
 pytest==7.4.4

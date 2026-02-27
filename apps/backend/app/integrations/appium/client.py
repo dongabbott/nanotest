@@ -186,6 +186,14 @@ class AppiumClient:
         except Exception as e:
             raise RuntimeError(f"tap_xy not supported: {e}")
 
+    def tap(self, locator_type: str, locator_value: str) -> None:
+        """Tap on an element (compatibility method used by runners)."""
+        element = self.find_element(locator_type, locator_value)
+        rect = element.rect
+        x = int(rect["x"] + rect["width"] / 2)
+        y = int(rect["y"] + rect["height"] / 2)
+        self.tap_xy(x, y)
+
     def double_tap(self, locator_type: str, locator_value: str) -> None:
         """Double-tap on an element."""
         element = self.find_element(locator_type, locator_value)
