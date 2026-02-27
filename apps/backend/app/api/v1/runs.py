@@ -40,6 +40,7 @@ from app.schemas.schemas import (
     TestRunNodeResponse,
     TestRunResponse,
     TestStepResultResponse,
+    ScreenAnalysisResponse,
 )
 
 from app.core.config import settings
@@ -636,7 +637,7 @@ async def get_run_steps(
     result = await db.execute(
         select(TestStepResult)
         .join(TestRunNode)
-        .where(TestRunNode.test_run_id == run_id)
+        .where(TestRunNode.test_run_id == str(run_id))
         .order_by(TestRunNode.created_at, TestStepResult.step_index)
     )
     steps = result.scalars().all()
@@ -668,7 +669,7 @@ async def ai_analyze_run(
         )
 
     # Check run is completed
-    if run.status not in ("passed", "failed", "completed"):
+    if run.status not in ("passed", "failed", "completed", "partial"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot analyze run in '{run.status}' status. Run must be completed.",
@@ -677,15 +678,113 @@ async def ai_analyze_run(
     # Generate a task ID for tracking
     task_id = uuid_module.uuid4().hex
 
-    # TODO: Dispatch Celery task for AI analysis
-    # from app.tasks.analysis import analyze_test_run
-    # analyze_test_run.delay(str(run_id), payload.analysis_types if payload else ["anomaly"])
+    # Dispatch Celery task for AI analysis
+    from app.tasks.analysis import analyze_test_run
+
+    analysis_types = payload.analysis_types if payload and payload.analysis_types else ["anomaly"]
+    analyze_test_run.apply_async(args=[str(run_id), analysis_types], task_id=task_id)
 
     return AIAnalyzeResponse(
         task_id=task_id,
         status="queued",
         message="AI analysis task has been queued",
     )
+
+
+@router.get("/runs/{run_id}/ai-analyses", response_model=list[ScreenAnalysisResponse])
+async def list_run_ai_analyses(
+    run_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    analysis_type: Optional[str] = Query(None, description="Filter by analysis_type"),
+):
+    """List all AI screen analyses for a run (detailed rows)."""
+    from app.domain.models import ScreenAnalysis
+
+    # Verify run access
+    result = await db.execute(
+        select(TestRun)
+        .join(Project)
+        .where(
+            TestRun.id == str(run_id),
+            Project.tenant_id == current_user.tenant_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Test run not found")
+
+    q = (
+        select(ScreenAnalysis)
+        .options(selectinload(ScreenAnalysis.step_result))
+        .join(TestStepResult)
+        .join(TestRunNode)
+        .where(TestRunNode.test_run_id == str(run_id))
+        .order_by(ScreenAnalysis.created_at.desc())
+    )
+
+    if analysis_type:
+        q = q.where(ScreenAnalysis.analysis_type == analysis_type)
+
+    result = await db.execute(q)
+    rows = result.scalars().all()
+
+    public_host = (settings.oss_url_scheme or "").rstrip("/")
+
+    enriched: list[ScreenAnalysisResponse] = []
+    for r in rows:
+        resp = ScreenAnalysisResponse.model_validate(r)
+        step = getattr(r, "step_result", None)
+        object_key = getattr(step, "screenshot_object_key", None) if step is not None else None
+        resp.screenshot_object_key = object_key
+        if object_key and public_host:
+            resp.screenshot_url = f"{public_host}/{object_key}"
+        enriched.append(resp)
+
+    return enriched
+
+
+@router.get("/runs/{run_id}/steps/{step_id}/ai-analyses", response_model=list[ScreenAnalysisResponse])
+async def list_step_ai_analyses(
+    run_id: UUID,
+    step_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """List AI analyses for a specific step in a run."""
+    from app.domain.models import ScreenAnalysis
+
+    # Verify run access
+    result = await db.execute(
+        select(TestRun)
+        .join(Project)
+        .where(
+            TestRun.id == str(run_id),
+            Project.tenant_id == current_user.tenant_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Test run not found")
+
+    result = await db.execute(
+        select(ScreenAnalysis)
+        .where(ScreenAnalysis.test_step_result_id == step_id)
+        .order_by(ScreenAnalysis.created_at.desc())
+    )
+    rows = result.scalars().all()
+
+    step_result = await db.get(TestStepResult, str(step_id))
+    public_host = (settings.oss_url_scheme or "").rstrip("/")
+    object_key = getattr(step_result, "screenshot_object_key", None) if step_result else None
+
+    enriched: list[ScreenAnalysisResponse] = []
+    for r in rows:
+        resp = ScreenAnalysisResponse.model_validate(r)
+        resp.screenshot_object_key = object_key
+        if object_key and public_host:
+            resp.screenshot_url = f"{public_host}/{object_key}"
+        enriched.append(resp)
+
+    return enriched
 
 
 @router.get("/runs/{run_id}/ai-summary", response_model=AISummaryResponse)

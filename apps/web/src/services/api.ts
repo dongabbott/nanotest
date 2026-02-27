@@ -110,8 +110,13 @@ export const testRunsApi = {
       sessionId: options?.sessionId,
     }),
   cancel: (runId: string) => apiClient.post(`/api/v1/runs/${runId}/cancel`),
-  aiAnalyze: (runId: string) => apiClient.post(`/api/v1/runs/${runId}/ai-analyze`),
+  aiAnalyze: (runId: string, payload?: { analysis_types?: string[] }) =>
+    apiClient.post(`/api/v1/runs/${runId}/ai-analyze`, payload || {}),
   getAiSummary: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/ai-summary`),
+  listAiAnalyses: (runId: string, params?: { analysis_type?: string }) =>
+    apiClient.get(`/api/v1/runs/${runId}/ai-analyses`, { params }),
+  listStepAiAnalyses: (runId: string, stepId: string) =>
+    apiClient.get(`/api/v1/runs/${runId}/steps/${stepId}/ai-analyses`),
   getRiskScore: (runId: string) => apiClient.get(`/api/v1/runs/${runId}/risk-score`),
   presignOssObject: (objectKey: string, expires = 3600) =>
     apiClient.get('/api/v1/oss/presign', { params: { object_key: objectKey, expires } }),
@@ -285,6 +290,11 @@ export const packagesApi = {
   // 按包名查找
   getByPackageName: (packageName: string) =>
     apiClient.get(`/api/v1/packages/by-name/${encodeURIComponent(packageName)}`),
+};
+
+// Tasks API
+export const tasksApi = {
+  getStatus: (taskId: string) => apiClient.get(`/api/v1/tasks/${taskId}`),
 };
 
 export default apiClient;

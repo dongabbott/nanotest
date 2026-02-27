@@ -10,6 +10,7 @@ from app.api.v1.reports import router as reports_router
 from app.api.v1.runs import router as runs_router
 from app.api.v1.websocket import router as ws_router
 from app.api.v1.packages import router as packages_router
+from app.api.v1.tasks import router as tasks_router
 
 api_router = APIRouter()
 
@@ -22,6 +23,7 @@ api_router.include_router(flows_router)
 api_router.include_router(runs_router)
 api_router.include_router(reports_router)
 api_router.include_router(packages_router)
+api_router.include_router(tasks_router)
 
 # WebSocket routes (no prefix)
 api_router.include_router(ws_router, tags=["WebSocket"])

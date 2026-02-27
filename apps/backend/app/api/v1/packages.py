@@ -108,7 +108,7 @@ async def upload_package(
 )
 async def list_packages(
     project_id: Optional[UUID] = Query(None, description="Filter by project ID"),
-    platform: Optional[str] = Query(None, regex="^(android|ios)$", description="Filter by platform"),
+    platform: Optional[str] = Query(None, pattern="^(android|ios)$", description="Filter by platform"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     current_user: User = Depends(get_current_user),

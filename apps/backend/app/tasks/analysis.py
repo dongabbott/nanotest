@@ -1,7 +1,6 @@
 """AI analysis Celery tasks."""
 import asyncio
 from typing import Any, List
-from uuid import UUID
 
 from app.tasks.celery_app import celery_app
 
@@ -14,9 +13,11 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
     from app.integrations.llm.client import get_llm_client
     from app.integrations.aliyun.oss_client import get_oss_client
     from sqlalchemy import select
+    import structlog
 
     async def _analyze():
         async with AsyncSessionLocal() as db:
+            logger = structlog.get_logger()
             # Get the test run
             result = await db.execute(
                 select(TestRun).where(TestRun.id == run_id)
@@ -30,7 +31,7 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                 select(TestStepResult)
                 .join(TestRunNode)
                 .where(
-                    TestRunNode.test_run_id == UUID(run_id),
+                    TestRunNode.test_run_id == run_id,
                     TestStepResult.screenshot_object_key.isnot(None),
                 )
             )
@@ -42,33 +43,67 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
             analyses_created = 0
 
             for step in steps:
+                screenshot_bytes: bytes | None = None
                 try:
-                    # Download screenshot
                     screenshot_bytes = oss_client.download_bytes(step.screenshot_object_key)
-
-                    # Run each analysis type
+                except Exception as e:
                     for analysis_type in analysis_types:
-                        result = await llm_client.analyze_screenshot(
+                        db.add(
+                            ScreenAnalysis(
+                                test_step_result_id=step.id,
+                                model_name=getattr(llm_client, "model", "unknown"),
+                                prompt_version="v1",
+                                analysis_type=analysis_type,
+                                result_json={"success": False, "stage": "download", "error": str(e)},
+                                confidence=0.0,
+                                latency_ms=0,
+                            )
+                        )
+                        analyses_created += 1
+                    logger.exception("AI screenshot download failed", run_id=run_id, step_id=step.id)
+                    continue
+
+                for analysis_type in analysis_types:
+                    try:
+                        ai_result = await llm_client.analyze_screenshot(
                             screenshot_bytes,
                             analysis_type=analysis_type,
                         )
+                        if ai_result.get("success"):
+                            result_json = ai_result.get("result", {})
+                            confidence = float(ai_result.get("confidence") or 0.0)
+                            latency_ms = int(ai_result.get("latency_ms") or 0)
+                        else:
+                            result_json = {"success": False, "stage": "llm", **(ai_result or {})}
+                            confidence = 0.0
+                            latency_ms = int((ai_result or {}).get("latency_ms") or 0)
 
-                        if result["success"]:
-                            analysis = ScreenAnalysis(
+                        db.add(
+                            ScreenAnalysis(
                                 test_step_result_id=step.id,
-                                model_name=result["model"],
+                                model_name=str(ai_result.get("model") or getattr(llm_client, "model", "unknown")),
                                 prompt_version="v1",
                                 analysis_type=analysis_type,
-                                result_json=result["result"],
-                                confidence=result["confidence"],
-                                latency_ms=result["latency_ms"],
+                                result_json=result_json,
+                                confidence=confidence,
+                                latency_ms=latency_ms,
                             )
-                            db.add(analysis)
-                            analyses_created += 1
-
-                except Exception as e:
-                    # Log error but continue with other steps
-                    print(f"Error analyzing step {step.id}: {e}")
+                        )
+                        analyses_created += 1
+                    except Exception as e:
+                        db.add(
+                            ScreenAnalysis(
+                                test_step_result_id=step.id,
+                                model_name=getattr(llm_client, "model", "unknown"),
+                                prompt_version="v1",
+                                analysis_type=analysis_type,
+                                result_json={"success": False, "stage": "exception", "error": str(e)},
+                                confidence=0.0,
+                                latency_ms=0,
+                            )
+                        )
+                        analyses_created += 1
+                        logger.exception("AI screenshot analyze failed", run_id=run_id, step_id=step.id, analysis_type=analysis_type)
 
             await db.commit()
 
@@ -182,7 +217,7 @@ def calculate_risk_signals(self, run_id: str) -> dict[str, Any]:
                 select(ScreenAnalysis)
                 .join(TestStepResult)
                 .join(TestRunNode)
-                .where(TestRunNode.test_run_id == UUID(run_id))
+                .where(TestRunNode.test_run_id == run_id)
             )
             analyses = result.scalars().all()
 
@@ -196,7 +231,7 @@ def calculate_risk_signals(self, run_id: str) -> dict[str, Any]:
             )
             if anomaly_count > 0:
                 signal = RiskSignal(
-                    test_run_id=UUID(run_id),
+                    test_run_id=run_id,
                     signal_type="layout_shift",
                     weight=0.3,
                     value=min(anomaly_count * 10, 100),
@@ -208,14 +243,14 @@ def calculate_risk_signals(self, run_id: str) -> dict[str, Any]:
             # Check for failed nodes
             result = await db.execute(
                 select(TestRunNode).where(
-                    TestRunNode.test_run_id == UUID(run_id),
+                    TestRunNode.test_run_id == run_id,
                     TestRunNode.status == "failed",
                 )
             )
             failed_nodes = result.scalars().all()
             if failed_nodes:
                 signal = RiskSignal(
-                    test_run_id=UUID(run_id),
+                    test_run_id=run_id,
                     signal_type="crash",
                     weight=0.5,
                     value=min(len(failed_nodes) * 20, 100),

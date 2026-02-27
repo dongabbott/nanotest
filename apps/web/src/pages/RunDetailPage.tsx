@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   ChevronLeft,
   CheckCircle,
@@ -24,7 +24,7 @@ import {
   RefreshCw,
   Ban,
 } from 'lucide-react';
-import { testRunsApi } from '../services/api';
+import { testRunsApi, tasksApi } from '../services/api';
 
 // ============================================================================
 // 状态配置
@@ -407,6 +407,255 @@ function EnvConfigPanel({ envConfig }: { envConfig: Record<string, any> }) {
 }
 
 // ============================================================================
+// AI 分析面板
+// ============================================================================
+
+function AIAnalysisPanel({ runId }: { runId: string }) {
+  const [analysisTypes, setAnalysisTypes] = useState<string[]>(['anomaly']);
+  const [filterType, setFilterType] = useState<string | undefined>(undefined);
+  const [taskId, setTaskId] = useState<string | null>(null);
+
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const triggerMutation = useMutation({
+    mutationFn: () => testRunsApi.aiAnalyze(runId, { analysis_types: analysisTypes }),
+    onSuccess: (resp) => {
+      const id = resp?.data?.task_id;
+      if (id) setTaskId(id);
+    },
+  });
+
+  const analysesQuery = useQuery({
+    queryKey: ['runAiAnalyses', runId, filterType],
+    queryFn: () => testRunsApi.listAiAnalyses(runId, filterType ? { analysis_type: filterType } : undefined),
+    enabled: !!runId,
+  });
+
+  const { data, isLoading, refetch } = analysesQuery;
+
+  const taskQuery = useQuery({
+    queryKey: ['taskStatus', taskId],
+    queryFn: () => tasksApi.getStatus(taskId!),
+    enabled: !!taskId,
+    refetchInterval: (q) => {
+      const state = q.state.data?.data?.state;
+      if (!state) return 2000;
+      return ['SUCCESS', 'FAILURE', 'REVOKED'].includes(state) ? false : 2000;
+    },
+  });
+
+  const taskState: string | undefined = taskQuery.data?.data?.state;
+
+  useEffect(() => {
+    if (!taskId || !taskState) return;
+    if (!['SUCCESS', 'FAILURE', 'REVOKED'].includes(taskState)) return;
+    void refetch();
+    setTaskId(null);
+  }, [taskId, taskState, refetch]);
+
+  const analyses: any[] = data?.data || [];
+
+  const findImageUrls = (obj: any): string[] => {
+    const out: string[] = [];
+    const visit = (v: any) => {
+      if (!v) return;
+      if (typeof v === 'string') {
+        const s = v.trim();
+        if (/^https?:\/\//i.test(s) && /\.(png|jpe?g|gif|webp)(\?.*)?$/i.test(s)) out.push(s);
+        return;
+      }
+      if (Array.isArray(v)) {
+        v.forEach(visit);
+        return;
+      }
+      if (typeof v === 'object') {
+        Object.values(v).forEach(visit);
+      }
+    };
+    visit(obj);
+    return Array.from(new Set(out));
+  };
+
+  return (
+    <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border border-purple-200 p-5">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2">
+          <Brain size={18} className="text-purple-600" />
+          <h3 className="font-semibold text-purple-900">AI 智能分析</h3>
+          {taskState && (
+            <span className="ml-2 text-xs text-purple-700">任务状态：{taskState}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="px-3 py-1.5 text-sm border border-purple-300 text-purple-700 rounded-lg hover:bg-white"
+          >
+            刷新
+          </button>
+          <button
+            type="button"
+            onClick={() => triggerMutation.mutate()}
+            disabled={triggerMutation.isPending}
+            className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
+          >
+            {triggerMutation.isPending ? '触发中...' : '手动触发分析'}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col md:flex-row md:items-center gap-3 mb-3">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-purple-800">分析类型：</span>
+          {['anomaly', 'ui_state', 'element_detect'].map((t) => (
+            <label key={t} className="inline-flex items-center gap-1.5 text-purple-800">
+              <input
+                type="checkbox"
+                checked={analysisTypes.includes(t)}
+                onChange={(e) => {
+                  setAnalysisTypes((prev) =>
+                    e.target.checked ? Array.from(new Set([...prev, t])) : prev.filter((x) => x !== t)
+                  );
+                }}
+              />
+              {t}
+            </label>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-purple-800">筛选：</span>
+          <select
+            className="px-2 py-1 rounded border border-purple-200"
+            value={filterType || ''}
+            onChange={(e) => setFilterType(e.target.value || undefined)}
+          >
+            <option value="">全部</option>
+            <option value="anomaly">anomaly</option>
+            <option value="ui_state">ui_state</option>
+            <option value="element_detect">element_detect</option>
+          </select>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="text-sm text-purple-700">加载中...</div>
+      ) : analyses.length === 0 ? (
+        <div className="text-sm text-purple-700">暂无分析结果（触发后稍等并刷新）</div>
+      ) : (
+        <div className="space-y-3">
+          {analyses.map((a) => {
+            const imageCandidates: string[] = [a.screenshot_url, ...findImageUrls(a.result_json)].filter(Boolean);
+            const primaryImg = imageCandidates[0];
+
+            return (
+              <div key={a.id} className="bg-white/70 rounded-xl border border-purple-100 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm text-purple-900 font-medium">
+                    {a.analysis_type} · conf {Math.round((a.confidence || 0) * 100)}% · {a.latency_ms}ms
+                  </div>
+                  <div className="text-xs text-purple-700">{formatTime(a.created_at)}</div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 items-start">
+                  {/* 左侧：手机尺寸截图 */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-xs text-gray-600">截图预览</div>
+                      {primaryImg && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => window.open(primaryImg, '_blank', 'noopener,noreferrer')}
+                            className="text-xs px-2 py-1 border border-gray-200 rounded hover:bg-white"
+                          >
+                            新窗口
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewUrl(primaryImg)}
+                            className="text-xs px-2 py-1 border border-gray-200 rounded hover:bg-white"
+                          >
+                            放大
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {primaryImg ? (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewUrl(primaryImg)}
+                        className="w-full rounded-xl border border-gray-200 bg-white overflow-hidden"
+                        title="点击放大"
+                      >
+                        {/* 以手机比例展示，尽量完整显示 */}
+                        <div className="w-full mx-auto" style={{ maxWidth: 360 }}>
+                          <div
+                            className="bg-gray-50"
+                            style={{ aspectRatio: '9 / 19.5' }}
+                          >
+                            <img
+                              src={primaryImg}
+                              alt="screenshot"
+                              className="w-full h-full object-contain"
+                              loading="lazy"
+                            />
+                          </div>
+                        </div>
+                      </button>
+                    ) : (
+                      <div className="w-full rounded-xl border border-dashed border-gray-300 bg-white/60 text-gray-500 text-xs p-6 text-center">
+                        无截图可预览
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 右侧：AI 结果 */}
+                  <div className="min-w-0">
+                    <div className="text-xs text-gray-600 mb-1">AI 分析结果</div>
+                    <pre className="p-3 bg-gray-50 rounded-xl border border-gray-200 overflow-x-auto text-xs leading-relaxed">
+                      {JSON.stringify(a.result_json, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Lightbox */}
+      {previewUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewUrl(null)}
+        >
+          <div className="max-w-5xl w-full max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-white text-sm truncate">{previewUrl}</div>
+              <button
+                type="button"
+                onClick={() => setPreviewUrl(null)}
+                className="text-white text-sm px-3 py-1 border border-white/30 rounded hover:bg-white/10"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="bg-black rounded-lg overflow-hidden border border-white/10">
+              <img src={previewUrl} alt="preview" className="w-full h-auto object-contain max-h-[85vh]" />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // 主页面
 // ============================================================================
 
@@ -476,6 +725,7 @@ export default function RunDetailPage() {
             <h2 className="text-xl font-bold text-gray-900">#{run.run_no}</h2>
             <StatusBadge status={run.status} size="md" />
           </div>
+
           <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
             <span className="flex items-center gap-1">
               <Calendar size={14} />
@@ -523,11 +773,15 @@ export default function RunDetailPage() {
           <p className="text-2xl font-bold text-gray-900">{totalNodes}</p>
         </div>
         <div className="bg-white rounded-xl border border-green-200 p-4">
-          <p className="text-xs text-green-600 mb-1 flex items-center gap-1"><CheckCircle size={12} />通过节点</p>
+          <p className="text-xs text-green-600 mb-1 flex items-center gap-1">
+            <CheckCircle size={12} />通过节点
+          </p>
           <p className="text-2xl font-bold text-green-700">{passedNodes}</p>
         </div>
         <div className="bg-white rounded-xl border border-red-200 p-4">
-          <p className="text-xs text-red-600 mb-1 flex items-center gap-1"><XCircle size={12} />失败节点</p>
+          <p className="text-xs text-red-600 mb-1 flex items-center gap-1">
+            <XCircle size={12} />失败节点
+          </p>
           <p className="text-2xl font-bold text-red-700">{failedNodes}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -541,7 +795,9 @@ export default function RunDetailPage() {
           )}
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-xs text-gray-500 mb-1 flex items-center gap-1"><Ban size={12} />跳过</p>
+          <p className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+            <Ban size={12} />跳过
+          </p>
           <p className="text-2xl font-bold text-gray-500">{skippedNodes}</p>
         </div>
       </div>
@@ -616,17 +872,9 @@ export default function RunDetailPage() {
         )}
       </div>
 
-      {/* ============ AI 分析区域（预留） ============ */}
+      {/* ============ AI 分析区域 ============ */}
       {run.status && ['passed', 'failed', 'partial'].includes(run.status) && (
-        <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border border-purple-200 p-5">
-          <div className="flex items-center gap-2 mb-2">
-            <Brain size={18} className="text-purple-600" />
-            <h3 className="font-semibold text-purple-900">AI 智能分析</h3>
-          </div>
-          <p className="text-sm text-purple-700">
-            执行已完成，可触发 AI 分析自动生成问题诊断报告和优化建议。
-          </p>
-        </div>
+        <AIAnalysisPanel runId={runId!} />
       )}
     </div>
   );

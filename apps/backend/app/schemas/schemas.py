@@ -581,6 +581,10 @@ class ScreenAnalysisResponse(TimestampSchema):
     confidence: float
     latency_ms: int
 
+    # Screenshot context for better UX
+    screenshot_object_key: Optional[str] = None
+    screenshot_url: Optional[str] = None
+
 
 class AISummaryResponse(BaseModel):
     """AI summary response."""
@@ -805,3 +809,12 @@ class PaginationParams(BaseModel):
     """Pagination parameters."""
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=20, ge=1, le=100)
+
+
+class TaskStatusResponse(BaseModel):
+    """Celery task status response."""
+    task_id: str
+    state: str
+    status: Optional[str] = None
+    result: Optional[dict[str, Any]] = None
+    error: Optional[str] = None
