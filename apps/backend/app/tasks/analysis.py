@@ -52,7 +52,7 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                             ScreenAnalysis(
                                 test_step_result_id=step.id,
                                 model_name=getattr(llm_client, "model", "unknown"),
-                                prompt_version="v1",
+                                prompt_version="v2",
                                 analysis_type=analysis_type,
                                 result_json={"success": False, "stage": "download", "error": str(e)},
                                 confidence=0.0,
@@ -63,12 +63,57 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                     logger.exception("AI screenshot download failed", run_id=run_id, step_id=step.id)
                     continue
 
+                # Pre-fetch page source XML URL for page_structure analysis
+                # Instead of downloading XML content, generate a presigned URL
+                # so the LLM can fetch it directly as a file attachment.
+                page_source_url: str | None = None
+                if "page_structure" in analysis_types and step.page_source_object_key:
+                    try:
+                        page_source_url = oss_client.get_download_url(
+                            step.page_source_object_key, expires=3600
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to generate presign URL for page source XML, "
+                            "page_structure analysis will be skipped for this step",
+                            step_id=step.id,
+                            error=str(e),
+                        )
+
                 for analysis_type in analysis_types:
                     try:
-                        ai_result = await llm_client.analyze_screenshot(
-                            screenshot_bytes,
-                            analysis_type=analysis_type,
-                        )
+                        # Route to the appropriate LLM method
+                        if analysis_type == "page_structure":
+                            if not page_source_url:
+                                # No XML available – record as skipped
+                                db.add(
+                                    ScreenAnalysis(
+                                        test_step_result_id=step.id,
+                                        model_name=getattr(llm_client, "model", "unknown"),
+                                        prompt_version="v2",
+                                        analysis_type=analysis_type,
+                                        result_json={
+                                            "success": False,
+                                            "stage": "pre-check",
+                                            "error": "page_source_object_key is empty or presign URL generation failed",
+                                        },
+                                        confidence=0.0,
+                                        latency_ms=0,
+                                    )
+                                )
+                                analyses_created += 1
+                                continue
+
+                            ai_result = await llm_client.analyze_page_structure(
+                                screenshot_bytes,
+                                page_source_url,
+                            )
+                        else:
+                            ai_result = await llm_client.analyze_screenshot(
+                                screenshot_bytes,
+                                analysis_type=analysis_type,
+                            )
+
                         if ai_result.get("success"):
                             result_json = ai_result.get("result", {})
                             confidence = float(ai_result.get("confidence") or 0.0)
@@ -82,7 +127,7 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                             ScreenAnalysis(
                                 test_step_result_id=step.id,
                                 model_name=str(ai_result.get("model") or getattr(llm_client, "model", "unknown")),
-                                prompt_version="v1",
+                                prompt_version="v2",
                                 analysis_type=analysis_type,
                                 result_json=result_json,
                                 confidence=confidence,
@@ -95,7 +140,7 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                             ScreenAnalysis(
                                 test_step_result_id=step.id,
                                 model_name=getattr(llm_client, "model", "unknown"),
-                                prompt_version="v1",
+                                prompt_version="v2",
                                 analysis_type=analysis_type,
                                 result_json={"success": False, "stage": "exception", "error": str(e)},
                                 confidence=0.0,
@@ -103,7 +148,7 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                             )
                         )
                         analyses_created += 1
-                        logger.exception("AI screenshot analyze failed", run_id=run_id, step_id=step.id, analysis_type=analysis_type)
+                        logger.exception("AI analysis failed", run_id=run_id, step_id=step.id, analysis_type=analysis_type)
 
             await db.commit()
 

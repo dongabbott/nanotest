@@ -185,15 +185,36 @@ class AppiumRunner(BaseRunner):
             return None
 
     async def get_page_source(self) -> Optional[str]:
-        """Get the current page source."""
+        """Get the current page source with retry.
+
+        UiAutomator2 / XCUITest may fail to dump the UI tree if the page is
+        mid-transition or extremely complex.  We retry up to 3 times with a
+        short delay to improve reliability.
+        """
         if not self._client:
             return None
-        try:
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._client.get_page_source)
-        except Exception as e:
-            logger.warning(f"Failed to get page source: {e}")
-            return None
+
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                loop = asyncio.get_event_loop()
+                xml = await loop.run_in_executor(None, self._client.get_page_source)
+                if xml:
+                    return xml
+                # Received empty/None – treat as transient failure
+                logger.warning(
+                    f"get_page_source returned empty (attempt {attempt}/{max_attempts})"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to get page source (attempt {attempt}/{max_attempts}): {e}"
+                )
+
+            if attempt < max_attempts:
+                await asyncio.sleep(0.5)
+
+        logger.warning("get_page_source exhausted all retries, returning None")
+        return None
 
     async def execute_step(self, step: TestStep) -> StepResult:
         """Execute a single test step."""
@@ -267,11 +288,17 @@ class AppiumRunner(BaseRunner):
             if should_capture:
                 capture_started = datetime.utcnow()
                 screenshot = await self.take_screenshot()
+
+                # Brief pause to let the UI tree stabilise after screenshot
+                # capture — reduces transient failures when dumping page source.
+                await asyncio.sleep(0.3)
+
                 page_source = await self.get_page_source()
                 capture_ended = datetime.utcnow()
                 result.metadata["screenshot_capture_ms"] = int(
                     (capture_ended - capture_started).total_seconds() * 1000
                 )
+                result.metadata["page_source_obtained"] = page_source is not None
 
                 if screenshot:
                     upload_started = datetime.utcnow()

@@ -425,6 +425,205 @@ function EnvConfigPanel({ envConfig }: { envConfig: Record<string, any> }) {
 }
 
 // ============================================================================
+// 页面结构分析评分卡片
+// ============================================================================
+
+const scoreLabels: Record<string, string> = {
+  structure_score: '结构质量',
+  automation_score: '自动化友好度',
+  copy_score: '文案质量',
+  visual_score: '视觉合理性',
+  interaction_score: '交互完整性',
+};
+
+const scoreWeights: Record<string, string> = {
+  structure_score: '20%',
+  automation_score: '30%',
+  copy_score: '20%',
+  visual_score: '10%',
+  interaction_score: '20%',
+};
+
+function scoreColor(v: number): string {
+  if (v >= 85) return 'bg-green-500';
+  if (v >= 70) return 'bg-yellow-500';
+  return 'bg-red-500';
+}
+
+function riskBadge(level: string) {
+  const map: Record<string, { color: string; bg: string; label: string }> = {
+    low: { color: 'text-green-700', bg: 'bg-green-100 border-green-300', label: '低风险' },
+    medium: { color: 'text-yellow-700', bg: 'bg-yellow-100 border-yellow-300', label: '中风险' },
+    high: { color: 'text-red-700', bg: 'bg-red-100 border-red-300', label: '高风险' },
+  };
+  const cfg = map[level] || map.medium;
+  return (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${cfg.bg} ${cfg.color}`}>
+      {cfg.label}
+    </span>
+  );
+}
+
+function PageStructureScoreCard({ result }: { result: any }) {
+  const scores = result?.scores;
+  const [showJson, setShowJson] = useState(false);
+
+  if (!scores) return null;
+
+  const dimensionKeys = ['automation_score', 'structure_score', 'copy_score', 'interaction_score', 'visual_score'];
+
+  return (
+    <div className="space-y-4">
+      {/* 总分 + 风险等级 */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-3xl font-bold text-gray-900">{scores.total_score ?? '-'}</span>
+          <span className="text-sm text-gray-500">/ 100</span>
+        </div>
+        {result.risk_level && riskBadge(result.risk_level)}
+        {result.page_type && (
+          <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{result.page_type}</span>
+        )}
+      </div>
+
+      {/* 分维度评分条 */}
+      <div className="grid grid-cols-1 gap-2">
+        {dimensionKeys.map((key) => {
+          const val = scores[key];
+          if (val == null) return null;
+          return (
+            <div key={key} className="flex items-center gap-3">
+              <span className="text-xs text-gray-600 w-28 flex-shrink-0">{scoreLabels[key] || key}</span>
+              <div className="flex-1 bg-gray-200 rounded-full h-2 overflow-hidden">
+                <div className={`h-full rounded-full transition-all ${scoreColor(val)}`} style={{ width: `${val}%` }} />
+              </div>
+              <span className="text-xs font-mono w-8 text-right text-gray-700">{val}</span>
+              <span className="text-[10px] text-gray-400 w-8">{scoreWeights[key]}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 页面摘要 */}
+      {result.page_summary && (
+        <div className="text-xs text-gray-700 bg-gray-50 rounded-lg p-3 border border-gray-200">
+          <span className="font-medium text-gray-500">页面摘要：</span>
+          {result.page_summary}
+        </div>
+      )}
+
+      {/* 潜在问题 */}
+      {result.potential_issues?.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-red-700 mb-1 flex items-center gap-1">
+            <AlertTriangle size={12} />
+            潜在问题 ({result.potential_issues.length})
+          </div>
+          <ul className="text-xs text-red-600 bg-red-50 rounded-lg p-3 border border-red-200 space-y-1 list-disc list-inside">
+            {result.potential_issues.map((issue: any, i: number) => (
+              <li key={i}>{typeof issue === 'string' ? issue : JSON.stringify(issue)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 文案问题 */}
+      {result.copy_issues && (
+        (result.copy_issues.xml_text_issues?.length > 0 ||
+         result.copy_issues.image_text_issues?.length > 0 ||
+         result.copy_issues.inconsistencies?.length > 0) && (
+          <div>
+            <div className="text-xs font-medium text-yellow-700 mb-1">文案问题</div>
+            <div className="text-xs bg-yellow-50 rounded-lg p-3 border border-yellow-200 space-y-1">
+              {result.copy_issues.xml_text_issues?.map((t: any, i: number) => (
+                <div key={`xml-${i}`}><span className="text-yellow-600 font-medium">[XML]</span> {typeof t === 'string' ? t : JSON.stringify(t)}</div>
+              ))}
+              {result.copy_issues.image_text_issues?.map((t: any, i: number) => (
+                <div key={`img-${i}`}><span className="text-yellow-600 font-medium">[截图]</span> {typeof t === 'string' ? t : JSON.stringify(t)}</div>
+              ))}
+              {result.copy_issues.inconsistencies?.map((t: any, i: number) => (
+                <div key={`inc-${i}`}><span className="text-orange-600 font-medium">[不一致]</span> {typeof t === 'string' ? t : JSON.stringify(t)}</div>
+              ))}
+            </div>
+          </div>
+        )
+      )}
+
+      {/* 测试建议 */}
+      {result.test_recommendations?.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-blue-700 mb-1">测试建议</div>
+          <ul className="text-xs text-blue-700 bg-blue-50 rounded-lg p-3 border border-blue-200 space-y-1 list-disc list-inside">
+            {result.test_recommendations.map((rec: any, i: number) => (
+              <li key={i}>{typeof rec === 'string' ? rec : JSON.stringify(rec)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 可交互元素摘要 */}
+      {result.interactive_elements?.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-gray-600 mb-1">
+            可交互元素 ({result.interactive_elements.length})
+          </div>
+          <div className="overflow-x-auto">
+            <table className="text-xs w-full border-collapse">
+              <thead>
+                <tr className="bg-gray-100 text-gray-600">
+                  <th className="px-2 py-1 text-left font-medium border border-gray-200">类型</th>
+                  <th className="px-2 py-1 text-left font-medium border border-gray-200">文本</th>
+                  <th className="px-2 py-1 text-left font-medium border border-gray-200">resource_id</th>
+                  <th className="px-2 py-1 text-left font-medium border border-gray-200">定位方式</th>
+                  <th className="px-2 py-1 text-left font-medium border border-gray-200">稳定性</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.interactive_elements.slice(0, 20).map((el: any, i: number) => (
+                  <tr key={i} className="hover:bg-gray-50">
+                    <td className="px-2 py-1 border border-gray-200 font-mono">{el.element_type || '-'}</td>
+                    <td className="px-2 py-1 border border-gray-200 max-w-[200px] truncate">{el.display_text || '-'}</td>
+                    <td className="px-2 py-1 border border-gray-200 font-mono text-[11px] max-w-[180px] truncate">{el.resource_id || '-'}</td>
+                    <td className="px-2 py-1 border border-gray-200">{el['推荐定位方式'] || el.recommended_locator || '-'}</td>
+                    <td className="px-2 py-1 border border-gray-200">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        (el['定位稳定性评估'] || el.locator_stability) === 'stable' ? 'bg-green-100 text-green-700' :
+                        (el['定位稳定性评估'] || el.locator_stability) === 'risky' ? 'bg-red-100 text-red-700' :
+                        'bg-yellow-100 text-yellow-700'
+                      }`}>
+                        {el['定位稳定性评估'] || el.locator_stability || '-'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {result.interactive_elements.length > 20 && (
+              <div className="text-xs text-gray-400 mt-1">... 还有 {result.interactive_elements.length - 20} 个元素</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 展开/折叠原始 JSON */}
+      <button
+        type="button"
+        onClick={() => setShowJson(!showJson)}
+        className="text-xs text-purple-600 hover:text-purple-800 flex items-center gap-1"
+      >
+        {showJson ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        {showJson ? '收起原始 JSON' : '查看原始 JSON'}
+      </button>
+      {showJson && (
+        <pre className="p-3 bg-gray-50 rounded-xl border border-gray-200 overflow-x-auto text-xs leading-relaxed max-h-[400px] overflow-y-auto">
+          {JSON.stringify(result, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // AI 分析面板
 // ============================================================================
 
@@ -524,9 +723,9 @@ function AIAnalysisPanel({ runId }: { runId: string }) {
       </div>
 
       <div className="flex flex-col md:flex-row md:items-center gap-3 mb-3">
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-sm flex-wrap">
           <span className="text-purple-800">分析类型：</span>
-          {['anomaly', 'ui_state', 'element_detect'].map((t) => (
+          {['anomaly', 'ui_state', 'element_detect', 'page_structure'].map((t) => (
             <label key={t} className="inline-flex items-center gap-1.5 text-purple-800">
               <input
                 type="checkbox"
@@ -537,7 +736,7 @@ function AIAnalysisPanel({ runId }: { runId: string }) {
                   );
                 }}
               />
-              {t}
+              {t === 'page_structure' ? '页面结构(XML+截图)' : t}
             </label>
           ))}
         </div>
@@ -553,6 +752,7 @@ function AIAnalysisPanel({ runId }: { runId: string }) {
             <option value="anomaly">anomaly</option>
             <option value="ui_state">ui_state</option>
             <option value="element_detect">element_detect</option>
+            <option value="page_structure">page_structure</option>
           </select>
         </div>
       </div>
@@ -633,9 +833,13 @@ function AIAnalysisPanel({ runId }: { runId: string }) {
                   {/* 右侧：AI 结果 */}
                   <div className="min-w-0">
                     <div className="text-xs text-gray-600 mb-1">AI 分析结果</div>
-                    <pre className="p-3 bg-gray-50 rounded-xl border border-gray-200 overflow-x-auto text-xs leading-relaxed">
-                      {JSON.stringify(a.result_json, null, 2)}
-                    </pre>
+                    {a.analysis_type === 'page_structure' ? (
+                      <PageStructureScoreCard result={a.result_json} />
+                    ) : (
+                      <pre className="p-3 bg-gray-50 rounded-xl border border-gray-200 overflow-x-auto text-xs leading-relaxed">
+                        {JSON.stringify(a.result_json, null, 2)}
+                      </pre>
+                    )}
                   </div>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   Monitor,
@@ -341,7 +341,6 @@ function ScreenshotView({
   hoveredNode,
   onSelectNode,
   onHoverNode,
-  screenSize,
 }: {
   screenshot: string;
   elementTree: ElementNode | null;
@@ -349,7 +348,6 @@ function ScreenshotView({
   hoveredNode: ElementNode | null;
   onSelectNode: (node: ElementNode | null) => void;
   onHoverNode: (node: ElementNode | null) => void;
-  screenSize: { width: number; height: number };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -374,6 +372,25 @@ function ScreenshotView({
 
   const elementsWithBounds = elementTree ? collectElementsWithBounds(elementTree) : [];
 
+  // Detect the actual device coordinate space from the root element's bounds.
+  // XML bounds use device-pixel coordinates; the screenshot's naturalWidth/Height
+  // is typically identical, but on some devices (e.g. with nav-bar cropping or
+  // display scaling) they may differ. We compute a ratio to bridge the two.
+  const deviceSize = useMemo(() => {
+    if (elementTree?.bounds) {
+      return {
+        width: elementTree.bounds.x + elementTree.bounds.width,
+        height: elementTree.bounds.y + elementTree.bounds.height,
+      };
+    }
+    // Fallback: assume screenshot pixels == device pixels
+    return imageSize;
+  }, [elementTree, imageSize]);
+
+  // Ratio: screenshot-pixel / device-pixel  (usually ≈ 1)
+  const sx = imageSize.width > 0 && deviceSize.width > 0 ? imageSize.width / deviceSize.width : 1;
+  const sy = imageSize.height > 0 && deviceSize.height > 0 ? imageSize.height / deviceSize.height : 1;
+
   // 处理图片加载获取实际尺寸
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
@@ -394,13 +411,13 @@ function ScreenshotView({
     if (!inspectMode || !elementTree) return;
 
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
+    // Convert click position to screenshot-pixel coordinates
+    const imgX = (e.clientX - rect.left) / scale;
+    const imgY = (e.clientY - rect.top) / scale;
 
-    // 缩放坐标到实际屏幕坐标
-    const scaleToScreen = imageSize.width > 0 ? screenSize.width / imageSize.width : 1;
-    const screenX = x * scaleToScreen;
-    const screenY = y * scaleToScreen;
+    // Convert screenshot-pixel → device-pixel (for matching against XML bounds)
+    const devX = imgX / sx;
+    const devY = imgY / sy;
 
     // 找到包含该点的最小元素
     let bestMatch: ElementNode | null = null;
@@ -409,7 +426,7 @@ function ScreenshotView({
     for (const el of elementsWithBounds) {
       if (!el.bounds) continue;
       const { x: bx, y: by, width: bw, height: bh } = el.bounds;
-      if (screenX >= bx && screenX <= bx + bw && screenY >= by && screenY <= by + bh) {
+      if (devX >= bx && devX <= bx + bw && devY >= by && devY <= by + bh) {
         const area = bw * bh;
         if (area < bestArea) {
           bestArea = area;
@@ -431,12 +448,10 @@ function ScreenshotView({
     }
 
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / scale;
-    const y = (e.clientY - rect.top) / scale;
-
-    const scaleToScreen = imageSize.width > 0 ? screenSize.width / imageSize.width : 1;
-    const screenX = x * scaleToScreen;
-    const screenY = y * scaleToScreen;
+    const imgX = (e.clientX - rect.left) / scale;
+    const imgY = (e.clientY - rect.top) / scale;
+    const devX = imgX / sx;
+    const devY = imgY / sy;
 
     let bestMatch: ElementNode | null = null;
     let bestArea = Infinity;
@@ -444,7 +459,7 @@ function ScreenshotView({
     for (const el of elementsWithBounds) {
       if (!el.bounds) continue;
       const { x: bx, y: by, width: bw, height: bh } = el.bounds;
-      if (screenX >= bx && screenX <= bx + bw && screenY >= by && screenY <= by + bh) {
+      if (devX >= bx && devX <= bx + bw && devY >= by && devY <= by + bh) {
         const area = bw * bh;
         if (area < bestArea) {
           bestArea = area;
@@ -456,15 +471,15 @@ function ScreenshotView({
     onHoverNode(bestMatch);
   };
 
-  // 计算元素在截图上的位置
+  // 计算元素在截图上的显示位置（CSS px）
+  // bounds(device-pixel) → ×sx/sy → screenshot-pixel → ×scale → display-pixel
   const getElementPosition = (node: ElementNode) => {
     if (!node.bounds || imageSize.width === 0) return null;
-    const scaleFromScreen = imageSize.width / screenSize.width;
     return {
-      left: node.bounds.x * scaleFromScreen * scale,
-      top: node.bounds.y * scaleFromScreen * scale,
-      width: node.bounds.width * scaleFromScreen * scale,
-      height: node.bounds.height * scaleFromScreen * scale,
+      left: node.bounds.x * sx * scale,
+      top: node.bounds.y * sy * scale,
+      width: node.bounds.width * sx * scale,
+      height: node.bounds.height * sy * scale,
     };
   };
 
@@ -576,8 +591,6 @@ export default function ElementInspector({ onSelectElement, className = '', devi
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'tree' | 'attributes'>('tree');
   const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
-  // 默认屏幕尺寸，用于坐标转换（实际会根据截图和设备信息调整）
-  const screenSize = { width: 1080, height: 1920 };
 
   // 获取活跃 Sessions
   const { data: sessionsData, isLoading: loadingSessions, refetch: refetchSessions } = useQuery({
@@ -760,7 +773,6 @@ export default function ElementInspector({ onSelectElement, className = '', devi
                 hoveredNode={hoveredNode}
                 onSelectNode={handleSelectNode}
                 onHoverNode={setHoveredNode}
-                screenSize={screenSize}
               />
             ) : (
               <div className="h-full flex items-center justify-center bg-gray-100">

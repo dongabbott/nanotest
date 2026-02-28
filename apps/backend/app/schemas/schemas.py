@@ -560,7 +560,7 @@ class AIAnalyzeRequest(BaseModel):
     """AI analysis request."""
     analysis_types: list[str] = Field(
         default=["anomaly"],
-        description="Types: ui_state, anomaly, element_detect"
+        description="Types: ui_state, anomaly, element_detect, page_structure"
     )
     include_steps: Optional[list[UUID]] = None
 

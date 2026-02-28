@@ -25,6 +25,7 @@ class LLMClient:
         return f"data:image/png;base64,{image_base64}"
 
     async def _create_multimodal_response_text(self, images: list[bytes], prompt_text: str) -> str:
+        """Send a multimodal request with images and text prompt."""
         import json as _json
 
         images_urls = [self._png_data_url(b) for b in images]
@@ -119,6 +120,232 @@ class LLMClient:
             return {
                 "success": False,
                 "analysis_type": analysis_type,
+                "error": str(e),
+                "model": self.model,
+                "latency_ms": latency_ms,
+                "confidence": 0.0,
+            }
+
+    async def analyze_page_structure(
+        self,
+        screenshot_bytes: bytes,
+        page_source_url: str,
+    ) -> dict[str, Any]:
+        """Analyze a mobile page using both screenshot and XML page source.
+
+        The screenshot is submitted as an image, and the XML page source URL
+        is embedded in the prompt text so the model can fetch and read it.
+
+        Args:
+            screenshot_bytes: PNG bytes of the screenshot.
+            page_source_url: Accessible (presigned) URL of the XML page source file.
+        """
+        start_time = time.time()
+
+        prompt_text = f"""你是移动端测试与UI结构分析专家。
+
+我将提供：
+1. 页面截图（以图片形式附上）
+2. Android 页面 XML（请通过以下 URL 自行读取内容进行分析）
+
+【页面 XML 文件地址】
+{page_source_url}
+
+请严格基于这两项内容分析，不得臆测不存在的功能。
+必须同时分析截图中的图片文字内容。
+必须区分：
+- XML中的结构文字
+- 截图中的视觉文字（OCR可见文字）
+
+如存在不一致或异常，必须列出。
+
+--------------------------------
+【分析任务】
+--------------------------------
+
+1️⃣ 判断页面类型及核心功能（简洁说明）
+
+2️⃣ 提取页面结构分区
+如：
+- 顶部区
+- 内容区
+- 按钮区
+- 底部导航区
+如无法判断标记 "unknown"
+
+3️⃣ 提取所有可交互元素
+每个元素需包含：
+- element_type
+- display_text
+- resource_id
+- content_desc
+- clickable (true/false)
+- 推荐定位方式（优先级：id > content-desc > text > xpath）
+- 定位稳定性评估（stable / unstable / risky）
+
+4️⃣ 文案问题分析（区分来源）
+- XML文字问题
+- 图片视觉文字问题
+检查：
+- 错别字
+- 语义不清
+- 多语言混乱
+- 文案不一致
+
+5️⃣ 页面潜在问题分析
+- 点击区域异常
+- 缺少resource-id
+- 不合理布局
+- 层级过深（>12）
+- 重复clickable嵌套
+- 元素遮挡
+- 视觉与结构不一致
+- 潜在交互风险
+
+6️⃣ 测试建议
+- 必测功能点
+- 自动化建议
+- 风险验证点
+
+--------------------------------
+【界面评分逻辑】
+--------------------------------
+
+基于上述分析结果，进行客观扣分评分。
+
+五个评分维度：
+
+① structure_score（结构质量 0-100）
+扣分项：
+- 层级>12
+- 冗余嵌套
+- 空容器
+- 结构异常
+
+② automation_score（自动化友好度 0-100）
+扣分项：
+- 关键元素缺少resource-id
+- 依赖text定位
+- 无content-desc
+- xpath依赖严重
+- 动态不稳定结构
+
+③ copy_score（文案质量 0-100）
+扣分项：
+- 错别字
+- 语义不清
+- 多语言混乱
+- XML与截图文字不一致
+
+④ visual_score（视觉合理性 0-100）
+扣分项：
+- 主按钮不突出
+- 遮挡
+- 文字裁切
+- 布局明显失衡
+
+⑤ interaction_score（交互完整性 0-100）
+扣分项：
+- 缺少主操作
+- 缺少返回路径
+- 存在死角页面
+- 交互路径不完整
+
+--------------------------------
+【评分规则】
+
+- 初始分100
+- 每发现明确问题合理扣分
+- 必须基于XML或截图中的客观事实
+- 不允许主观表达
+- 若信息不足，该项给80分并标记"information_insufficient"
+- 分数必须为整数
+
+--------------------------------
+【总分计算】
+
+total_score =
+automation_score × 30%
++ structure_score × 20%
++ copy_score × 20%
++ interaction_score × 20%
++ visual_score × 10%
+
+结果四舍五入取整数。
+
+--------------------------------
+【风险等级】
+
+- total_score ≥ 85 → low
+- 70 ≤ total_score < 85 → medium
+- total_score < 70 → high
+
+--------------------------------
+【输出格式（必须严格JSON）】
+
+{{
+  "page_type": "",
+  "page_summary": "",
+  "layout_sections": [],
+  "interactive_elements": [],
+  "copy_issues": {{
+    "xml_text_issues": [],
+    "image_text_issues": [],
+    "inconsistencies": []
+  }},
+  "potential_issues": [],
+  "test_recommendations": [],
+  "scores": {{
+    "structure_score": 0,
+    "automation_score": 0,
+    "copy_score": 0,
+    "visual_score": 0,
+    "interaction_score": 0,
+    "total_score": 0
+  }},
+  "risk_level": "low | medium | high"
+}}
+
+--------------------------------
+如果无法确认，请标记为 "unknown"。
+只允许输出JSON，不得输出额外解释文字。"""
+
+        try:
+            output_text = await self._create_multimodal_response_text(
+                images=[screenshot_bytes],
+                prompt_text=prompt_text,
+            )
+            latency_ms = int((time.time() - start_time) * 1000)
+
+            import json
+
+            # Strip markdown code fences if the model wraps the response
+            cleaned = output_text.strip()
+            if cleaned.startswith("```"):
+                first_newline = cleaned.index("\n")
+                cleaned = cleaned[first_newline + 1:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3].rstrip()
+
+            try:
+                result_json = json.loads(cleaned)
+            except json.JSONDecodeError:
+                result_json = {"raw_response": output_text}
+
+            return {
+                "success": True,
+                "analysis_type": "page_structure",
+                "result": result_json,
+                "model": self.model,
+                "latency_ms": latency_ms,
+                "confidence": 0.90,
+            }
+
+        except Exception as e:
+            latency_ms = int((time.time() - start_time) * 1000)
+            return {
+                "success": False,
+                "analysis_type": "page_structure",
                 "error": str(e),
                 "model": self.model,
                 "latency_ms": latency_ms,
