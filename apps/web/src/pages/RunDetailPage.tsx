@@ -430,18 +430,16 @@ function EnvConfigPanel({ envConfig }: { envConfig: Record<string, any> }) {
 
 const scoreLabels: Record<string, string> = {
   structure_score: '结构质量',
-  automation_score: '自动化友好度',
   copy_score: '文案质量',
   visual_score: '视觉合理性',
   interaction_score: '交互完整性',
 };
 
 const scoreWeights: Record<string, string> = {
-  structure_score: '20%',
-  automation_score: '30%',
-  copy_score: '20%',
-  visual_score: '10%',
-  interaction_score: '20%',
+  structure_score: '25%',
+  copy_score: '25%',
+  visual_score: '25%',
+  interaction_score: '25%',
 };
 
 function scoreColor(v: number): string {
@@ -470,7 +468,7 @@ function PageStructureScoreCard({ result }: { result: any }) {
 
   if (!scores) return null;
 
-  const dimensionKeys = ['automation_score', 'structure_score', 'copy_score', 'interaction_score', 'visual_score'];
+  const dimensionKeys = ['structure_score', 'copy_score', 'interaction_score', 'visual_score'];
 
   return (
     <div className="space-y-4">
@@ -628,9 +626,10 @@ function PageStructureScoreCard({ result }: { result: any }) {
 // ============================================================================
 
 function AIAnalysisPanel({ runId }: { runId: string }) {
-  const [analysisTypes, setAnalysisTypes] = useState<string[]>(['anomaly']);
+  const [analysisTypes, setAnalysisTypes] = useState<string[]>(['page_structure']);
   const [filterType, setFilterType] = useState<string | undefined>(undefined);
   const [taskId, setTaskId] = useState<string | null>(null);
+  const [showTaskErrors, setShowTaskErrors] = useState(false);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
@@ -662,15 +661,25 @@ function AIAnalysisPanel({ runId }: { runId: string }) {
   });
 
   const taskState: string | undefined = taskQuery.data?.data?.state;
+  const taskResult: any = taskQuery.data?.data?.result;
+  const taskError: string | undefined = taskQuery.data?.data?.error;
 
   useEffect(() => {
     if (!taskId || !taskState) return;
     if (!['SUCCESS', 'FAILURE', 'REVOKED'].includes(taskState)) return;
     void refetch();
-    setTaskId(null);
+    // Don't clear taskId so we can keep displaying the task result/error
   }, [taskId, taskState, refetch]);
 
   const analyses: any[] = data?.data || [];
+
+  // Separate succeeded and failed analyses
+  const isAnalysisFailed = (a: any) => {
+    const rj = a.result_json;
+    return rj && rj.success === false;
+  };
+  const succeededAnalyses = analyses.filter((a) => !isAnalysisFailed(a));
+  const failedAnalyses = analyses.filter((a) => isAnalysisFailed(a));
 
   const findImageUrls = (obj: any): string[] => {
     const out: string[] = [];
@@ -693,14 +702,24 @@ function AIAnalysisPanel({ runId }: { runId: string }) {
     return Array.from(new Set(out));
   };
 
+  const stageLabels: Record<string, string> = {
+    download: '截图下载',
+    'pre-check': '前置检查',
+    llm: 'LLM 调用',
+    exception: '运行异常',
+  };
+
   return (
     <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border border-purple-200 p-5">
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <Brain size={18} className="text-purple-600" />
           <h3 className="font-semibold text-purple-900">AI 智能分析</h3>
-          {taskState && (
-            <span className="ml-2 text-xs text-purple-700">任务状态：{taskState}</span>
+          {taskId && taskState && !['SUCCESS', 'FAILURE', 'REVOKED'].includes(taskState) && (
+            <span className="ml-2 inline-flex items-center gap-1.5 text-xs text-purple-700">
+              <Loader2 size={12} className="animate-spin" />
+              分析中...（{taskState}）
+            </span>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -713,7 +732,10 @@ function AIAnalysisPanel({ runId }: { runId: string }) {
           </button>
           <button
             type="button"
-            onClick={() => triggerMutation.mutate()}
+            onClick={() => {
+              setShowTaskErrors(false);
+              triggerMutation.mutate();
+            }}
             disabled={triggerMutation.isPending}
             className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
           >
@@ -722,23 +744,108 @@ function AIAnalysisPanel({ runId }: { runId: string }) {
         </div>
       </div>
 
+      {/* ---- Task 级别结果/错误 ---- */}
+      {taskId && taskState === 'FAILURE' && taskError && (
+        <div className="mb-3 p-3 bg-red-50 border border-red-300 rounded-lg">
+          <div className="flex items-start gap-2">
+            <XCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-red-800 mb-1">分析任务执行失败</div>
+              <pre className="text-xs text-red-700 whitespace-pre-wrap break-all">{taskError}</pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {taskId && taskState === 'SUCCESS' && taskResult && (
+        <div className={`mb-3 p-3 rounded-lg border ${
+          taskResult.failed > 0
+            ? 'bg-yellow-50 border-yellow-300'
+            : 'bg-green-50 border-green-300'
+        }`}>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-3 text-sm">
+              {taskResult.failed > 0 ? (
+                <AlertTriangle size={16} className="text-yellow-600" />
+              ) : (
+                <CheckCircle size={16} className="text-green-600" />
+              )}
+              <span className={taskResult.failed > 0 ? 'text-yellow-800 font-medium' : 'text-green-800 font-medium'}>
+                分析完成
+              </span>
+              <span className="text-gray-600">
+                截图 {taskResult.total_screenshots ?? '-'}
+              </span>
+              <span className="text-green-700">
+                成功 {taskResult.succeeded ?? 0}
+              </span>
+              {(taskResult.failed ?? 0) > 0 && (
+                <span className="text-red-700">
+                  失败 {taskResult.failed}
+                </span>
+              )}
+            </div>
+            {taskResult.errors?.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowTaskErrors(!showTaskErrors)}
+                className="text-xs text-red-700 hover:text-red-900 flex items-center gap-1"
+              >
+                {showTaskErrors ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                {showTaskErrors ? '收起错误详情' : `查看 ${taskResult.errors.length} 条错误`}
+              </button>
+            )}
+          </div>
+
+          {showTaskErrors && taskResult.errors?.length > 0 && (
+            <div className="mt-2 space-y-1.5 max-h-[300px] overflow-y-auto">
+              {taskResult.errors.map((err: any, i: number) => (
+                <div key={i} className="flex items-start gap-2 p-2 bg-red-50 border border-red-200 rounded text-xs">
+                  <XCircle size={12} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap text-red-800">
+                      <span className="font-medium">步骤 #{err.step_index ?? '?'}</span>
+                      {err.analysis_type && (
+                        <span className="bg-red-100 px-1.5 py-0.5 rounded">{err.analysis_type}</span>
+                      )}
+                      <span className="bg-red-100 px-1.5 py-0.5 rounded">
+                        {stageLabels[err.stage] || err.stage}
+                      </span>
+                    </div>
+                    <pre className="text-red-700 whitespace-pre-wrap break-all mt-0.5">{err.error}</pre>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row md:items-center gap-3 mb-3">
         <div className="flex items-center gap-2 text-sm flex-wrap">
           <span className="text-purple-800">分析类型：</span>
-          {['anomaly', 'ui_state', 'element_detect', 'page_structure'].map((t) => (
-            <label key={t} className="inline-flex items-center gap-1.5 text-purple-800">
-              <input
-                type="checkbox"
-                checked={analysisTypes.includes(t)}
-                onChange={(e) => {
-                  setAnalysisTypes((prev) =>
-                    e.target.checked ? Array.from(new Set([...prev, t])) : prev.filter((x) => x !== t)
-                  );
-                }}
-              />
-              {t === 'page_structure' ? '页面结构(XML+截图)' : t}
-            </label>
-          ))}
+          {['page_structure', 'anomaly', 'ui_state', 'element_detect'].map((t) => {
+            const labels: Record<string, string> = {
+              page_structure: '页面结构(截图+XML，推荐)',
+              anomaly: '异常检测',
+              ui_state: 'UI状态',
+              element_detect: '元素检测',
+            };
+            return (
+              <label key={t} className="inline-flex items-center gap-1.5 text-purple-800">
+                <input
+                  type="checkbox"
+                  checked={analysisTypes.includes(t)}
+                  onChange={(e) => {
+                    setAnalysisTypes((prev) =>
+                      e.target.checked ? Array.from(new Set([...prev, t])) : prev.filter((x) => x !== t)
+                    );
+                  }}
+                />
+                {labels[t] || t}
+              </label>
+            );
+          })}
         </div>
 
         <div className="flex items-center gap-2 text-sm">
@@ -757,13 +864,100 @@ function AIAnalysisPanel({ runId }: { runId: string }) {
         </div>
       </div>
 
+      {/* ---- 分析结果统计条 ---- */}
+      {analyses.length > 0 && (
+        <div className="flex items-center gap-4 mb-3 text-xs text-purple-800 bg-white/50 rounded-lg px-3 py-2 border border-purple-100">
+          <span>共 <strong>{analyses.length}</strong> 条分析记录</span>
+          <span className="text-green-700">✓ 成功 <strong>{succeededAnalyses.length}</strong></span>
+          {failedAnalyses.length > 0 && (
+            <span className="text-red-700">✗ 失败 <strong>{failedAnalyses.length}</strong></span>
+          )}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-sm text-purple-700">加载中...</div>
       ) : analyses.length === 0 ? (
         <div className="text-sm text-purple-700">暂无分析结果（触发后稍等并刷新）</div>
       ) : (
         <div className="space-y-3">
-          {analyses.map((a) => {
+          {/* ---- 失败的分析记录（醒目展示在最上方） ---- */}
+          {failedAnalyses.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-red-700 flex items-center gap-1.5">
+                <AlertTriangle size={14} />
+                分析失败（{failedAnalyses.length} 条）
+              </div>
+              {failedAnalyses.map((a) => {
+                const rj = a.result_json || {};
+                const errStage = stageLabels[rj.stage] || rj.stage || '未知';
+                const errMsg = rj.error || '未知错误';
+                const imageCandidates: string[] = [a.screenshot_url].filter(Boolean);
+                const primaryImg = imageCandidates[0];
+
+                return (
+                  <div key={a.id} className="bg-red-50/80 rounded-xl border border-red-200 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-sm">
+                        <XCircle size={14} className="text-red-500" />
+                        <span className="text-red-800 font-medium">{a.analysis_type}</span>
+                        <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">
+                          {errStage}
+                        </span>
+                        <span className="text-xs text-red-500">{a.latency_ms}ms</span>
+                      </div>
+                      <div className="text-xs text-red-600">{formatTime(a.created_at)}</div>
+                    </div>
+
+                    <div className="mt-2 p-2.5 bg-red-100 border border-red-200 rounded-lg">
+                      <pre className="text-xs text-red-800 whitespace-pre-wrap break-all">{errMsg}</pre>
+                    </div>
+
+                    {/* 关联截图信息 */}
+                    <div className="mt-2 flex items-center gap-3 text-xs text-red-600">
+                      {a.screenshot_object_key && (
+                        <span className="flex items-center gap-1">
+                          <Image size={12} />
+                          <code className="bg-red-100 px-1 py-0.5 rounded font-mono text-[11px] max-w-[300px] truncate inline-block align-middle">
+                            {a.screenshot_object_key}
+                          </code>
+                        </span>
+                      )}
+                      {primaryImg && (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewUrl(primaryImg)}
+                          className="px-2 py-0.5 border border-red-300 rounded hover:bg-red-100 text-red-700"
+                        >
+                          查看截图
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 原始 JSON（可展开） */}
+                    <details className="mt-2">
+                      <summary className="text-xs text-red-600 cursor-pointer hover:text-red-800">
+                        查看原始 result_json
+                      </summary>
+                      <pre className="mt-1 p-2 bg-red-100 rounded text-xs text-red-800 overflow-x-auto max-h-[200px] overflow-y-auto">
+                        {JSON.stringify(rj, null, 2)}
+                      </pre>
+                    </details>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ---- 成功的分析记录 ---- */}
+          {succeededAnalyses.length > 0 && failedAnalyses.length > 0 && (
+            <div className="text-xs font-medium text-green-700 flex items-center gap-1.5 pt-2">
+              <CheckCircle size={14} />
+              分析成功（{succeededAnalyses.length} 条）
+            </div>
+          )}
+
+          {succeededAnalyses.map((a) => {
             const imageCandidates: string[] = [a.screenshot_url, ...findImageUrls(a.result_json)].filter(Boolean);
             const primaryImg = imageCandidates[0];
 

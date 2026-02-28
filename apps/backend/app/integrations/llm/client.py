@@ -194,7 +194,6 @@ class LLMClient:
 
 5️⃣ 页面潜在问题分析
 - 点击区域异常
-- 缺少resource-id
 - 不合理布局
 - 层级过深（>12）
 - 重复clickable嵌套
@@ -204,7 +203,6 @@ class LLMClient:
 
 6️⃣ 测试建议
 - 必测功能点
-- 自动化建议
 - 风险验证点
 
 --------------------------------
@@ -213,7 +211,7 @@ class LLMClient:
 
 基于上述分析结果，进行客观扣分评分。
 
-五个评分维度：
+四个评分维度：
 
 ① structure_score（结构质量 0-100）
 扣分项：
@@ -222,29 +220,21 @@ class LLMClient:
 - 空容器
 - 结构异常
 
-② automation_score（自动化友好度 0-100）
-扣分项：
-- 关键元素缺少resource-id
-- 依赖text定位
-- 无content-desc
-- xpath依赖严重
-- 动态不稳定结构
-
-③ copy_score（文案质量 0-100）
+② copy_score（文案质量 0-100）
 扣分项：
 - 错别字
 - 语义不清
 - 多语言混乱
 - XML与截图文字不一致
 
-④ visual_score（视觉合理性 0-100）
+③ visual_score（视觉合理性 0-100）
 扣分项：
 - 主按钮不突出
 - 遮挡
 - 文字裁切
 - 布局明显失衡
 
-⑤ interaction_score（交互完整性 0-100）
+④ interaction_score（交互完整性 0-100）
 扣分项：
 - 缺少主操作
 - 缺少返回路径
@@ -265,11 +255,10 @@ class LLMClient:
 【总分计算】
 
 total_score =
-automation_score × 30%
-+ structure_score × 20%
-+ copy_score × 20%
-+ interaction_score × 20%
-+ visual_score × 10%
+structure_score × 25%
++ copy_score × 25%
++ visual_score × 25%
++ interaction_score × 25%
 
 结果四舍五入取整数。
 
@@ -297,7 +286,6 @@ automation_score × 30%
   "test_recommendations": [],
   "scores": {{
     "structure_score": 0,
-    "automation_score": 0,
     "copy_score": 0,
     "visual_score": 0,
     "interaction_score": 0,

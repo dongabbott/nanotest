@@ -41,12 +41,16 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
             oss_client = get_oss_client()
             
             analyses_created = 0
+            succeeded_count = 0
+            failed_count = 0
+            error_details: list[dict[str, Any]] = []
 
             for step in steps:
                 screenshot_bytes: bytes | None = None
                 try:
                     screenshot_bytes = oss_client.download_bytes(step.screenshot_object_key)
                 except Exception as e:
+                    error_msg = f"Screenshot download failed: {e}"
                     for analysis_type in analysis_types:
                         db.add(
                             ScreenAnalysis(
@@ -60,12 +64,18 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                             )
                         )
                         analyses_created += 1
+                        failed_count += 1
+                    error_details.append({
+                        "step_id": str(step.id),
+                        "step_index": step.step_index,
+                        "stage": "download",
+                        "error": error_msg,
+                        "screenshot_key": step.screenshot_object_key,
+                    })
                     logger.exception("AI screenshot download failed", run_id=run_id, step_id=step.id)
                     continue
 
                 # Pre-fetch page source XML URL for page_structure analysis
-                # Instead of downloading XML content, generate a presigned URL
-                # so the LLM can fetch it directly as a file attachment.
                 page_source_url: str | None = None
                 if "page_structure" in analysis_types and step.page_source_object_key:
                     try:
@@ -85,7 +95,7 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                         # Route to the appropriate LLM method
                         if analysis_type == "page_structure":
                             if not page_source_url:
-                                # No XML available – record as skipped
+                                skip_reason = "page_source_object_key is empty or presign URL generation failed"
                                 db.add(
                                     ScreenAnalysis(
                                         test_step_result_id=step.id,
@@ -95,13 +105,21 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                                         result_json={
                                             "success": False,
                                             "stage": "pre-check",
-                                            "error": "page_source_object_key is empty or presign URL generation failed",
+                                            "error": skip_reason,
                                         },
                                         confidence=0.0,
                                         latency_ms=0,
                                     )
                                 )
                                 analyses_created += 1
+                                failed_count += 1
+                                error_details.append({
+                                    "step_id": str(step.id),
+                                    "step_index": step.step_index,
+                                    "analysis_type": analysis_type,
+                                    "stage": "pre-check",
+                                    "error": skip_reason,
+                                })
                                 continue
 
                             ai_result = await llm_client.analyze_page_structure(
@@ -118,10 +136,19 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                             result_json = ai_result.get("result", {})
                             confidence = float(ai_result.get("confidence") or 0.0)
                             latency_ms = int(ai_result.get("latency_ms") or 0)
+                            succeeded_count += 1
                         else:
                             result_json = {"success": False, "stage": "llm", **(ai_result or {})}
                             confidence = 0.0
                             latency_ms = int((ai_result or {}).get("latency_ms") or 0)
+                            failed_count += 1
+                            error_details.append({
+                                "step_id": str(step.id),
+                                "step_index": step.step_index,
+                                "analysis_type": analysis_type,
+                                "stage": "llm",
+                                "error": str(ai_result.get("error", "LLM returned success=false")),
+                            })
 
                         db.add(
                             ScreenAnalysis(
@@ -148,14 +175,26 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                             )
                         )
                         analyses_created += 1
+                        failed_count += 1
+                        error_details.append({
+                            "step_id": str(step.id),
+                            "step_index": step.step_index,
+                            "analysis_type": analysis_type,
+                            "stage": "exception",
+                            "error": str(e),
+                        })
                         logger.exception("AI analysis failed", run_id=run_id, step_id=step.id, analysis_type=analysis_type)
 
             await db.commit()
 
             return {
-                "success": True,
+                "success": failed_count == 0 and len(steps) > 0,
                 "run_id": run_id,
+                "total_screenshots": len(steps),
                 "analyses_created": analyses_created,
+                "succeeded": succeeded_count,
+                "failed": failed_count,
+                "errors": error_details,
             }
 
     return asyncio.run(_analyze())

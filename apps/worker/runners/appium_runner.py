@@ -273,67 +273,27 @@ class AppiumRunner(BaseRunner):
                 (result.ended_at - started_at).total_seconds() * 1000
             )
 
-            # Take screenshot and upload to OSS
-            # Plan A: if the step is an explicit 'screenshot' action, do not double-capture
-            # (the step itself is used as a marker; automatic capture is skipped)
-            is_explicit_screenshot_step = (step.action or '').lower() == 'screenshot'
+            # Screenshot & page-source capture strategy:
+            # Only explicit 'screenshot' steps capture screenshot + XML.
+            # Other steps no longer auto-capture because the page may still
+            # be loading/animating right after an action, leading to
+            # mismatches between the screenshot and the XML tree.
+            is_screenshot_step = (step.action or '').lower() == 'screenshot'
 
-            should_capture = (not is_explicit_screenshot_step) and (
-                self.context.screenshot_on_step or (
-                    self.context.screenshot_on_failure
-                    and result.status in (StepStatus.FAILED, StepStatus.ERROR)
-                )
-            )
+            if is_screenshot_step and result.status == StepStatus.PASSED:
+                # _action_screenshot set a marker; perform the actual async
+                # capture here where we have a running event loop.
+                label = result.metadata.pop("_screenshot_label", "screenshot")
+                result.metadata.pop("_do_screenshot", None)
+                await self._do_screenshot_capture(result, step.index, label=label)
 
-            if should_capture:
-                capture_started = datetime.utcnow()
-                screenshot = await self.take_screenshot()
-
-                # Brief pause to let the UI tree stabilise after screenshot
-                # capture — reduces transient failures when dumping page source.
-                await asyncio.sleep(0.3)
-
-                page_source = await self.get_page_source()
-                capture_ended = datetime.utcnow()
-                result.metadata["screenshot_capture_ms"] = int(
-                    (capture_ended - capture_started).total_seconds() * 1000
-                )
-                result.metadata["page_source_obtained"] = page_source is not None
-
-                if screenshot:
-                    upload_started = datetime.utcnow()
-                    label = result.status.value
-                    # Prefer the external callback if set, otherwise upload to OSS
-                    if self._screenshot_callback:
-                        path = await self._screenshot_callback(
-                            self.context.run_id,
-                            step.index,
-                            screenshot,
-                        )
-                        result.screenshot_path = path
-                    else:
-                        result.screenshot_path = await self._upload_screenshot(
-                            screenshot, step.index, label
-                        )
-                    upload_ended = datetime.utcnow()
-                    result.metadata["screenshot_upload_ms"] = int(
-                        (upload_ended - upload_started).total_seconds() * 1000
-                    )
-
-                # Upload page source XML (paired with screenshot)
-                if page_source:
-                    try:
-                        ps_upload_started = datetime.utcnow()
-                        label = result.status.value
-                        result.page_source_path = await self._upload_page_source(
-                            page_source, step.index, label
-                        )
-                        ps_upload_ended = datetime.utcnow()
-                        result.metadata["page_source_upload_ms"] = int(
-                            (ps_upload_ended - ps_upload_started).total_seconds() * 1000
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to save page source: {e}")
+            elif not is_screenshot_step and (
+                self.context.screenshot_on_failure
+                and result.status in (StepStatus.FAILED, StepStatus.ERROR)
+            ):
+                # For non-screenshot steps, only capture on failure so we have
+                # evidence of what went wrong.
+                await self._do_screenshot_capture(result, step.index, label="error")
 
         return result
 
@@ -595,9 +555,72 @@ class AppiumRunner(BaseRunner):
         return {}
 
     def _action_screenshot(self, step: TestStep) -> dict[str, Any]:
-        """Take a screenshot (explicitly requested)."""
-        # Screenshot will be taken by the step execution flow
-        return {}
+        """Take a screenshot (explicitly requested by user).
+
+        This is a sync method running inside run_in_executor.  We cannot
+        perform async I/O (screenshot capture + OSS upload) here because there
+        is no event loop in the executor thread.  Instead we return a marker
+        via metadata; execute_step's finally block (which *is* async) will
+        detect the marker and perform the actual capture.
+        """
+        label = step.metadata.get("name") or "screenshot"
+        return {
+            "metadata": {
+                "_do_screenshot": True,
+                "_screenshot_label": label,
+            }
+        }
+
+    async def _do_screenshot_capture(self, result, step_index: int, label: str = "") -> None:
+        """Perform screenshot + page source capture and upload to OSS.
+
+        ``result`` is any object with ``screenshot_path``, ``page_source_path``
+        and ``metadata`` attributes (works with both ``StepResult`` and the
+        lightweight ``_Carrier`` used by ``_action_screenshot``).
+        """
+        capture_started = datetime.utcnow()
+
+        screenshot = await self.take_screenshot()
+
+        # Brief pause to let the UI tree stabilise after screenshot capture
+        await asyncio.sleep(0.3)
+
+        page_source = await self.get_page_source()
+
+        capture_ended = datetime.utcnow()
+        result.metadata["screenshot_capture_ms"] = int(
+            (capture_ended - capture_started).total_seconds() * 1000
+        )
+        result.metadata["page_source_obtained"] = page_source is not None
+
+        if screenshot:
+            upload_started = datetime.utcnow()
+            if self._screenshot_callback:
+                path = await self._screenshot_callback(
+                    self.context.run_id, step_index, screenshot,
+                )
+                result.screenshot_path = path
+            else:
+                result.screenshot_path = await self._upload_screenshot(
+                    screenshot, step_index, label
+                )
+            upload_ended = datetime.utcnow()
+            result.metadata["screenshot_upload_ms"] = int(
+                (upload_ended - upload_started).total_seconds() * 1000
+            )
+
+        if page_source:
+            try:
+                ps_upload_started = datetime.utcnow()
+                result.page_source_path = await self._upload_page_source(
+                    page_source, step_index, label
+                )
+                ps_upload_ended = datetime.utcnow()
+                result.metadata["page_source_upload_ms"] = int(
+                    (ps_upload_ended - ps_upload_started).total_seconds() * 1000
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save page source: {e}")
 
     def _action_tap_xy(self, step: TestStep) -> dict[str, Any]:
         """Tap at coordinates provided as 'x,y'."""
