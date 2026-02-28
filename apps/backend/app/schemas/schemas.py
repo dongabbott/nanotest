@@ -182,7 +182,7 @@ class TestCaseBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
-    status: str = Field(default="draft", pattern="^(draft|active|archived)$")
+    status: str = Field(default="active", pattern="^(draft|active|archived)$")
 
 
 class TestCaseCreate(TestCaseBase):
@@ -274,7 +274,7 @@ class TestFlowBase(BaseModel):
     """Base test flow schema."""
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
-    status: str = Field(default="draft", pattern="^(draft|active|archived)$")
+    status: str = Field(default="active", pattern="^(draft|active|archived)$")
 
 
 class TestFlowCreate(TestFlowBase):

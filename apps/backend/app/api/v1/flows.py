@@ -81,6 +81,7 @@ async def list_test_flows(
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
+    status_filter: str = Query(None, alias="status"),
 ):
     """List test flows for a project."""
     await verify_project_access(project_id, current_user, db)
@@ -89,6 +90,9 @@ async def list_test_flows(
         TestFlow.project_id == str(project_id),
         TestFlow.deleted_at.is_(None),
     )
+
+    if status_filter:
+        base_query = base_query.where(TestFlow.status == status_filter)
 
     count_query = select(func.count()).select_from(base_query.subquery())
     total = await db.scalar(count_query)

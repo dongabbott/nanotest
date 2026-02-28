@@ -217,7 +217,7 @@ class TestCase(Base, TimestampMixin, SoftDeleteMixin):
     dsl_version: Mapped[int] = mapped_column(Integer, default=1)
     dsl_content: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     tags: Mapped[dict] = mapped_column(JSON, nullable=False, default=list)
-    status: Mapped[str] = mapped_column(String(50), default="draft")  # draft, active, archived
+    status: Mapped[str] = mapped_column(String(50), default="active")  # draft, active, archived
 
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="test_cases")
@@ -261,7 +261,7 @@ class TestFlow(Base, TimestampMixin, SoftDeleteMixin):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     graph_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     entry_node: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    status: Mapped[str] = mapped_column(String(50), default="draft")  # draft, active, archived
+    status: Mapped[str] = mapped_column(String(50), default="active")  # draft, active, archived
 
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="test_flows")

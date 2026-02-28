@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, GitBranch, Edit, Trash2, Play, ArrowLeft } from 'lucide-react';
+import { Plus, GitBranch, Edit, Trash2, Play, ArrowLeft, Eye, X } from 'lucide-react';
 import { testFlowsApi, testCasesApi } from '../services/api';
 import DAGFlowDesigner from '../components/DAGFlowDesigner';
 
@@ -334,29 +334,46 @@ export default function TestFlowsPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [viewMode, setViewMode] = useState<'list' | 'create' | 'edit'>('list');
   const [editingFlowId, setEditingFlowId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['testFlows', projectId],
-    queryFn: () => testFlowsApi.list(projectId!, 1, 50),
+    queryKey: ['testFlows', projectId, statusFilter],
+    queryFn: () => testFlowsApi.list(projectId!, 1, 50, statusFilter),
     enabled: !!projectId,
     refetchOnMount: 'always',
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (flowId: string) => testFlowsApi.update(flowId, { status: 'archived' } as any),
+    mutationFn: (flowId: string) => testFlowsApi.delete(flowId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['testFlows', projectId] });
+    },
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: ({ flowId, status }: { flowId: string; status: string }) =>
+      testFlowsApi.update(flowId, { status }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['testFlows', projectId] });
     },
   });
 
   const flows = data?.data?.items || [];
+  const total = data?.data?.total || 0;
 
   const statusLabels: Record<string, string> = {
     active: '启用',
     draft: '草稿',
     archived: '已归档',
   };
+
+  const statusTabs = [
+    { key: undefined as string | undefined, label: '全部' },
+    { key: 'active', label: '启用' },
+    { key: 'draft', label: '草稿' },
+    { key: 'archived', label: '已归档' },
+  ];
 
   // 打开创建页面
   const handleCreate = () => {
@@ -404,6 +421,24 @@ export default function TestFlowsPage() {
         </button>
       </div>
 
+      {/* 状态筛选 Tabs */}
+      <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+        {statusTabs.map((tab) => (
+          <button
+            key={tab.key ?? 'all'}
+            onClick={() => setStatusFilter(tab.key)}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+              statusFilter === tab.key
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+        <span className="ml-2 text-xs text-gray-400">共 {total} 条</span>
+      </div>
+
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[1, 2, 3].map((i) => (
@@ -434,6 +469,34 @@ export default function TestFlowsPage() {
                   <GitBranch size={20} className="text-purple-600" />
                 </div>
                 <div className="flex items-center gap-1">
+                  {/* 状态切换按钮 */}
+                  {flow.status === 'draft' && (
+                    <button
+                      onClick={() => statusMutation.mutate({ flowId: flow.id, status: 'active' })}
+                      className="p-1.5 hover:bg-green-50 rounded text-gray-400 hover:text-green-600"
+                      title="启用"
+                    >
+                      <Eye size={16} />
+                    </button>
+                  )}
+                  {flow.status === 'active' && (
+                    <button
+                      onClick={() => statusMutation.mutate({ flowId: flow.id, status: 'archived' })}
+                      className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-orange-500"
+                      title="归档"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                  {flow.status === 'archived' && (
+                    <button
+                      onClick={() => statusMutation.mutate({ flowId: flow.id, status: 'active' })}
+                      className="p-1.5 hover:bg-green-50 rounded text-gray-400 hover:text-green-600"
+                      title="恢复启用"
+                    >
+                      <Eye size={16} />
+                    </button>
+                  )}
                   <Link
                     to={`/projects/${projectId}/runs?flow=${flow.id}`}
                     className="p-1.5 hover:bg-green-100 rounded text-gray-400 hover:text-green-600"
@@ -449,7 +512,11 @@ export default function TestFlowsPage() {
                     <Edit size={16} />
                   </button>
                   <button
-                    onClick={() => deleteMutation.mutate(flow.id)}
+                    onClick={() => {
+                      if (confirm('确定要删除此流程吗？此操作不可恢复。')) {
+                        deleteMutation.mutate(flow.id);
+                      }
+                    }}
                     className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-red-600"
                     title="删除"
                   >

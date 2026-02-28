@@ -96,7 +96,6 @@ function TestCaseEditorModal({
     e.stopPropagation();
 
     // Guard: ignore submits not triggered by our explicit submit button.
-    // Some nested buttons/components inside the form may accidentally trigger a submit.
     const nativeEvent: any = (e as any).nativeEvent;
     if (nativeEvent?.submitter && nativeEvent.submitter?.getAttribute) {
       const isOurSubmit = nativeEvent.submitter.getAttribute('data-submit') === 'true';
@@ -203,7 +202,6 @@ function TestCaseEditorModal({
   // 处理从元素检查器选择的定位器
   const handleSelectElement = (selector: Selector) => {
     setPendingSelector(selector);
-    // 提示用户已选择元素
     setTimeout(() => setPendingSelector(null), 3000);
   };
 
@@ -222,17 +220,13 @@ function TestCaseEditorModal({
     <div
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
       onMouseDown={(e) => {
-        // Only close when clicking the backdrop itself (not children/portals).
         if (e.target === e.currentTarget) {
           e.stopPropagation();
           onClose();
           resetForm();
         }
       }}
-      onClick={(e) => {
-        // Avoid click bubbling from nested portals triggering anything on the backdrop.
-        e.stopPropagation();
-      }}
+      onClick={(e) => { e.stopPropagation(); }}
     >
       <div
         className={`bg-white rounded-xl shadow-xl overflow-hidden flex flex-col transition-all duration-300 ${
@@ -250,7 +244,6 @@ function TestCaseEditorModal({
             <p className="text-sm text-gray-500">使用可视化设计器或直接编写 DSL 代码</p>
           </div>
           <div className="flex items-center gap-3">
-            {/* 元素检查器开关 */}
             {activeTab === 'visual' && (
               <button
                 type="button"
@@ -266,7 +259,6 @@ function TestCaseEditorModal({
                 <span className="hidden sm:inline">元素检查器</span>
               </button>
             )}
-            {/* 模式切换 */}
             <div className="flex bg-gray-200 rounded-lg p-0.5">
               <button
                 type="button"
@@ -306,14 +298,12 @@ function TestCaseEditorModal({
           </div>
         </div>
 
-        {/* 错误提示 */}
         {error && (
           <div className="mx-6 mt-4 bg-red-50 text-red-600 px-4 py-3 rounded-lg text-sm">
             {error}
           </div>
         )}
 
-        {/* 待应用的选择器提示 */}
         {pendingSelector && (
           <div className="mx-6 mt-4 bg-green-50 border border-green-200 px-4 py-3 rounded-lg text-sm flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -335,12 +325,10 @@ function TestCaseEditorModal({
           </div>
         )}
 
-        {/* 内容区域 */}
         <form
           onSubmit={handleSubmit}
           className="flex-1 overflow-hidden flex flex-col"
           onKeyDown={(e) => {
-            // Avoid Enter in inputs triggering submit implicitly while editing.
             if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) {
               const target = e.target as HTMLElement;
               const tag = target.tagName?.toLowerCase();
@@ -349,11 +337,9 @@ function TestCaseEditorModal({
           }}
         >
           <div className="flex-1 overflow-hidden flex">
-            {/* 左侧编辑区 */}
             <div className={`flex-1 overflow-auto p-6 ${showInspector && activeTab === 'visual' ? 'border-r border-gray-200' : ''}`}>
               {activeTab === 'visual' ? (
                 <div className="space-y-6">
-                  {/* 基本信息 */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -379,7 +365,6 @@ function TestCaseEditorModal({
                     </div>
                   </div>
 
-                  {/* 标签 */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">标签</label>
                     <div className="flex flex-wrap gap-2 mb-2">
@@ -390,13 +375,7 @@ function TestCaseEditorModal({
                         >
                           <Tag size={12} />
                           {tag}
-                          <button
-                            type="button"
-                            onClick={() => removeTag(i)}
-                            className="ml-1 hover:text-blue-900"
-                          >
-                            ×
-                          </button>
+                          <button type="button" onClick={() => removeTag(i)} className="ml-1 hover:text-blue-900">×</button>
                         </span>
                       ))}
                     </div>
@@ -409,34 +388,22 @@ function TestCaseEditorModal({
                         className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                         placeholder="输入标签后按回车添加"
                       />
-                      <button 
-                        type="button"
-                        onClick={addTag} 
-                        className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200"
-                      >
-                        添加
-                      </button>
+                      <button type="button" onClick={addTag} className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200">添加</button>
                     </div>
                   </div>
 
-                  {/* 步骤设计器 */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       测试步骤 <span className="text-red-500">*</span>
                     </label>
                     <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 min-h-[300px]">
-                      <TestCaseStepDesigner
-                        dsl={dsl}
-                        onChange={setDsl}
-                      />
+                      <TestCaseStepDesigner dsl={dsl} onChange={setDsl} />
                     </div>
                   </div>
                 </div>
               ) : (
                 <div className="h-full">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    DSL 代码 (JSON)
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">DSL 代码 (JSON)</label>
                   <textarea
                     value={codeContent}
                     onChange={(e) => setCodeContent(e.target.value)}
@@ -447,19 +414,13 @@ function TestCaseEditorModal({
               )}
             </div>
 
-            {/* 右侧元素检查器 */}
             {showInspector && activeTab === 'visual' && (
               <div className="w-[55%] flex-shrink-0 overflow-hidden">
-                <ElementInspector
-                  onSelectElement={handleSelectElement}
-                  devices={localDevices}
-                  className="h-full rounded-none border-0"
-                />
+                <ElementInspector onSelectElement={handleSelectElement} devices={localDevices} className="h-full rounded-none border-0" />
               </div>
             )}
           </div>
 
-          {/* 底部操作栏 */}
           <div className="flex items-center justify-between gap-3 px-6 py-4 border-t bg-gray-50">
             <div className="text-sm text-gray-500">
               {activeTab === 'visual' && dsl.steps.length > 0 && (
@@ -467,19 +428,8 @@ function TestCaseEditorModal({
               )}
             </div>
             <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => { onClose(); resetForm(); }}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                data-submit="true"
-                disabled={saveMutation.isPending}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-              >
+              <button type="button" onClick={() => { onClose(); resetForm(); }} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100">取消</button>
+              <button type="submit" data-submit="true" disabled={saveMutation.isPending} className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
                 {saveMutation.isPending ? '保存中...' : editCase ? '保存修改' : '创建用例'}
               </button>
             </div>
@@ -494,29 +444,46 @@ export default function TestCasesPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCase, setEditingCase] = useState<any>(null);
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['testCases', projectId],
-    queryFn: () => testCasesApi.list(projectId!, 1, 50),
+    queryKey: ['testCases', projectId, statusFilter],
+    queryFn: () => testCasesApi.list(projectId!, 1, 50, statusFilter),
     enabled: !!projectId,
     refetchOnMount: 'always',
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (caseId: string) => testCasesApi.update(caseId, { status: 'archived' } as any),
+    mutationFn: (caseId: string) => testCasesApi.delete(caseId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['testCases', projectId] });
+    },
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: ({ caseId, status }: { caseId: string; status: string }) =>
+      testCasesApi.update(caseId, { status }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['testCases', projectId] });
     },
   });
 
   const testCases = data?.data?.items || [];
+  const total = data?.data?.total || 0;
 
   const statusLabels: Record<string, string> = {
     active: '启用',
     draft: '草稿',
     archived: '已归档',
   };
+
+  const statusTabs = [
+    { key: undefined as string | undefined, label: '全部' },
+    { key: 'active', label: '启用' },
+    { key: 'draft', label: '草稿' },
+    { key: 'archived', label: '已归档' },
+  ];
 
   const handleEdit = (tc: any) => {
     setEditingCase(tc);
@@ -542,6 +509,24 @@ export default function TestCasesPage() {
           <Plus size={18} />
           <span>新建用例</span>
         </button>
+      </div>
+
+      {/* 状态筛选 Tabs */}
+      <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+        {statusTabs.map((tab) => (
+          <button
+            key={tab.key ?? 'all'}
+            onClick={() => setStatusFilter(tab.key)}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+              statusFilter === tab.key
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+        <span className="ml-2 text-xs text-gray-400">共 {total} 条</span>
       </div>
 
       {isLoading ? (
@@ -619,6 +604,34 @@ export default function TestCasesPage() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-1">
+                      {/* 状态切换按钮 */}
+                      {tc.status === 'draft' && (
+                        <button
+                          onClick={() => statusMutation.mutate({ caseId: tc.id, status: 'active' })}
+                          className="p-1.5 hover:bg-green-50 rounded text-gray-400 hover:text-green-600"
+                          title="启用"
+                        >
+                          <Eye size={16} />
+                        </button>
+                      )}
+                      {tc.status === 'active' && (
+                        <button
+                          onClick={() => statusMutation.mutate({ caseId: tc.id, status: 'archived' })}
+                          className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-orange-500"
+                          title="归档"
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                      {tc.status === 'archived' && (
+                        <button
+                          onClick={() => statusMutation.mutate({ caseId: tc.id, status: 'active' })}
+                          className="p-1.5 hover:bg-green-50 rounded text-gray-400 hover:text-green-600"
+                          title="恢复启用"
+                        >
+                          <Eye size={16} />
+                        </button>
+                      )}
                       <button 
                         onClick={() => handleEdit(tc)}
                         className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-blue-600" 
@@ -628,7 +641,7 @@ export default function TestCasesPage() {
                       </button>
                       <button
                         onClick={() => {
-                          if (confirm('确定要删除此用例吗？')) {
+                          if (confirm('确定要删除此用例吗？此操作不可恢复。')) {
                             deleteMutation.mutate(tc.id);
                           }
                         }}

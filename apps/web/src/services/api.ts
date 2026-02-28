@@ -54,29 +54,31 @@ export const projectsApi = {
 
 // Test Cases API
 export const testCasesApi = {
-  list: (projectId: string, page = 1, pageSize = 50) =>
+  list: (projectId: string, page = 1, pageSize = 50, status?: string) =>
     apiClient.get(`/api/v1/projects/${projectId}/cases`, {
-      params: { page, page_size: pageSize },
+      params: { page, page_size: pageSize, ...(status ? { status } : {}) },
     }),
   get: (caseId: string) => apiClient.get(`/api/v1/cases/${caseId}`),
   create: (projectId: string, data: { name: string; description?: string; dsl_content: any; tags?: string[] }) =>
     apiClient.post(`/api/v1/projects/${projectId}/cases`, data),
-  update: (caseId: string, data: Partial<{ name: string; description?: string; dsl_content: any; tags: string[] }>) =>
+  update: (caseId: string, data: Partial<{ name: string; description?: string; dsl_content: any; tags: string[]; status: string }>) =>
     apiClient.put(`/api/v1/cases/${caseId}`, data),
+  delete: (caseId: string) => apiClient.delete(`/api/v1/cases/${caseId}`),
   validateDsl: (dsl_content: any) => apiClient.post('/api/v1/cases/validate-dsl', { dsl_content }),
 };
 
 // Test Flows API
 export const testFlowsApi = {
-  list: (projectId: string, page = 1, pageSize = 50) =>
+  list: (projectId: string, page = 1, pageSize = 50, status?: string) =>
     apiClient.get(`/api/v1/projects/${projectId}/flows`, {
-      params: { page, page_size: pageSize },
+      params: { page, page_size: pageSize, ...(status ? { status } : {}) },
     }),
   get: (flowId: string) => apiClient.get(`/api/v1/flows/${flowId}`),
   create: (projectId: string, data: { name: string; graph_json: object }) =>
     apiClient.post(`/api/v1/projects/${projectId}/flows`, data),
-  update: (flowId: string, data: Partial<{ name: string; graph_json: object }>) =>
+  update: (flowId: string, data: Partial<{ name: string; graph_json: object; status: string }>) =>
     apiClient.put(`/api/v1/flows/${flowId}`, data),
+  delete: (flowId: string) => apiClient.delete(`/api/v1/flows/${flowId}`),
   compile: (flowId: string) => apiClient.post(`/api/v1/flows/${flowId}/compile`),
   listBindings: (flowId: string) =>
     apiClient.get(`/api/v1/flows/${flowId}/bindings`),
