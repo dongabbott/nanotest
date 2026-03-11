@@ -129,27 +129,43 @@ class LLMClient:
     async def analyze_page_structure(
         self,
         screenshot_bytes: bytes,
-        page_source_url: str,
+        page_source_xml: str,
     ) -> dict[str, Any]:
         """Analyze a mobile page using both screenshot and XML page source.
 
-        The screenshot is submitted as an image, and the XML page source URL
-        is embedded in the prompt text so the model can fetch and read it.
+        The screenshot is submitted as an image, and the XML page source
+        content is directly embedded in the prompt text.
 
         Args:
             screenshot_bytes: PNG bytes of the screenshot.
-            page_source_url: Accessible (presigned) URL of the XML page source file.
+            page_source_xml: Raw XML string of the page source hierarchy.
         """
         start_time = time.time()
+
+        # Truncate very large XML to avoid exceeding token limits.
+        # Most page sources are under 50k chars; if larger, keep the first
+        # portion which usually contains the most relevant structure.
+        max_xml_chars = 60000
+        xml_truncated = False
+        xml_content = page_source_xml
+        if len(xml_content) > max_xml_chars:
+            xml_content = xml_content[:max_xml_chars]
+            xml_truncated = True
+
+        truncation_note = ""
+        if xml_truncated:
+            truncation_note = "\n（注意：XML 内容因长度过大已截断，请基于已提供的部分进行分析）\n"
 
         prompt_text = f"""你是移动端测试与UI结构分析专家。
 
 我将提供：
 1. 页面截图（以图片形式附上）
-2. Android 页面 XML（请通过以下 URL 自行读取内容进行分析）
-
-【页面 XML 文件地址】
-{page_source_url}
+2. Android/iOS 页面 XML 源码（直接附在下方）
+{truncation_note}
+【页面 XML 源码】
+```xml
+{xml_content}
+```
 
 请严格基于这两项内容分析，不得臆测不存在的功能。
 必须同时分析截图中的图片文字内容。

@@ -235,12 +235,23 @@ class AppiumClient:
         end_y: int,
         duration: int = 500,
     ) -> None:
-        """Perform a swipe gesture using W3C actions (fallback if needed)."""
+        """Perform a swipe gesture using W3C actions (fallback if needed).
+
+        The gesture sequence is: move to start → press down → pause(duration)
+        → move to end → release.  The pause between pointer_down and
+        move_to_location controls the perceived speed of the swipe.
+        Selenium's W3C PointerActions.move_to_location does NOT accept a
+        duration kwarg, so we use an explicit pause instead.
+        """
         actions = self._new_finger_actions()
         if actions:
+            dur_sec = max(duration, 50) / 1000.0
             actions.pointer_action.move_to_location(start_x, start_y)
             actions.pointer_action.pointer_down()
-            actions.pointer_action.pause(max(duration, 50) / 1000.0)
+            # A brief initial pause so the OS registers the touch-down event
+            actions.pointer_action.pause(0.05)
+            # The pause before move controls swipe speed / momentum
+            actions.pointer_action.pause(dur_sec)
             actions.pointer_action.move_to_location(end_x, end_y)
             actions.pointer_action.pointer_up()
             actions.perform()
@@ -253,28 +264,80 @@ class AppiumClient:
             raise RuntimeError(f"swipe not supported: {e}")
 
     def scroll(self, direction: str = "down") -> None:
-        """Scroll screen up/down."""
-        direction = (direction or "down").lower()
+        """Scroll screen in any direction: up, down, left, right."""
+        direction = (direction or "down").lower().strip()
         if direction == "up":
             self.scroll_up()
+        elif direction == "left":
+            self.scroll_left()
+        elif direction == "right":
+            self.scroll_right()
         else:
+            # "down" or any unrecognised value → default scroll down
             self.scroll_down()
 
     def scroll_down(self) -> None:
         """Scroll down on the screen."""
         size = self.driver.get_window_size()
         start_x = size["width"] // 2
-        start_y = int(size["height"] * 0.8)
-        end_y = int(size["height"] * 0.2)
-        self.swipe(start_x, start_y, start_x, end_y)
+        start_y = int(size["height"] * 0.75)
+        end_y = int(size["height"] * 0.25)
+        self.swipe(start_x, start_y, start_x, end_y, duration=600)
 
     def scroll_up(self) -> None:
         """Scroll up on the screen."""
         size = self.driver.get_window_size()
         start_x = size["width"] // 2
-        start_y = int(size["height"] * 0.2)
-        end_y = int(size["height"] * 0.8)
-        self.swipe(start_x, start_y, start_x, end_y)
+        start_y = int(size["height"] * 0.25)
+        end_y = int(size["height"] * 0.75)
+        self.swipe(start_x, start_y, start_x, end_y, duration=600)
+
+    def scroll_left(self) -> None:
+        """Scroll left on the screen (swipe from right to left)."""
+        size = self.driver.get_window_size()
+        start_y = size["height"] // 2
+        start_x = int(size["width"] * 0.8)
+        end_x = int(size["width"] * 0.2)
+        self.swipe(start_x, start_y, end_x, start_y, duration=600)
+
+    def scroll_right(self) -> None:
+        """Scroll right on the screen (swipe from left to right)."""
+        size = self.driver.get_window_size()
+        start_y = size["height"] // 2
+        start_x = int(size["width"] * 0.2)
+        end_x = int(size["width"] * 0.8)
+        self.swipe(start_x, start_y, end_x, start_y, duration=600)
+
+    def drag(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        duration: int = 1000,
+    ) -> None:
+        """Drag from one point to another (long-press then move).
+
+        Similar to swipe but with a longer initial hold, which is
+        required for drag-and-drop interactions.
+        """
+        actions = self._new_finger_actions()
+        if actions:
+            dur_sec = max(duration, 200) / 1000.0
+            actions.pointer_action.move_to_location(start_x, start_y)
+            actions.pointer_action.pointer_down()
+            # hold long enough so the OS registers this as a long-press / drag-start
+            actions.pointer_action.pause(0.3)
+            # pause to control the drag speed
+            actions.pointer_action.pause(dur_sec)
+            actions.pointer_action.move_to_location(end_x, end_y)
+            actions.pointer_action.pause(0.1)
+            actions.pointer_action.pointer_up()
+            actions.perform()
+            return
+
+        # Fallback to swipe with longer duration
+        self.swipe(start_x, start_y, end_x, end_y, duration=max(duration, 1000))
 
     def long_press(
         self,

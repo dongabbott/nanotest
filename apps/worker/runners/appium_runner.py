@@ -34,6 +34,9 @@ class AppiumRunner(BaseRunner):
         "swipe": "_action_swipe",
         "scroll_down": "_action_scroll_down",
         "scroll_up": "_action_scroll_up",
+        "scroll_left": "_action_scroll_left",
+        "scroll_right": "_action_scroll_right",
+        "drag": "_action_drag",
         "long_press": "_action_long_press",
         "back": "_action_back",
         "home": "_action_home",
@@ -417,10 +420,10 @@ class AppiumRunner(BaseRunner):
         return {}
 
     def _action_scroll(self, step: TestStep) -> dict[str, Any]:
-        """Scroll the screen (up/down)."""
-        direction = (step.input_value or step.metadata.get("direction") or "down")
-        self._client.scroll(str(direction))
-        return {}
+        """Scroll the screen in any direction (up/down/left/right)."""
+        direction = (step.input_value or step.metadata.get("direction") or "down").strip().lower()
+        self._client.scroll(direction)
+        return {"actual_value": direction}
 
     def _action_input(self, step: TestStep) -> dict[str, Any]:
         """Input text into an element."""
@@ -434,15 +437,28 @@ class AppiumRunner(BaseRunner):
         return {}
 
     def _action_swipe(self, step: TestStep) -> dict[str, Any]:
-        """Perform a swipe gesture."""
-        coords = step.metadata.get("coords", {})
-        self._client.swipe(
-            coords.get("start_x", 500),
-            coords.get("start_y", 1500),
-            coords.get("end_x", 500),
-            coords.get("end_y", 500),
-            coords.get("duration", 500),
-        )
+        """Perform a swipe gesture.
+
+        Supports two modes:
+        1. Explicit coords in metadata: {"coords": {"start_x":..., "start_y":..., "end_x":..., "end_y":..., "duration":...}}
+        2. Direction-based (no coords): uses input_value or metadata.direction (up/down/left/right)
+           with optional metadata.distance (0.0-1.0, default 0.5) to control swipe length.
+        """
+        coords = step.metadata.get("coords")
+        if coords and isinstance(coords, dict) and ("start_x" in coords or "end_x" in coords):
+            # Explicit coordinate mode
+            size = self._client.get_window_size()
+            self._client.swipe(
+                int(coords.get("start_x", size["width"] // 2)),
+                int(coords.get("start_y", size["height"] // 2)),
+                int(coords.get("end_x", size["width"] // 2)),
+                int(coords.get("end_y", size["height"] // 2)),
+                int(coords.get("duration", 500)),
+            )
+        else:
+            # Direction-based mode: treat swipe like scroll with configurable distance
+            direction = (step.input_value or step.metadata.get("direction") or "down").strip().lower()
+            self._client.scroll(direction)
         return {}
 
     def _action_scroll_down(self, step: TestStep) -> dict[str, Any]:
@@ -454,6 +470,41 @@ class AppiumRunner(BaseRunner):
         """Scroll up on the screen."""
         self._client.scroll_up()
         return {}
+
+    def _action_scroll_left(self, step: TestStep) -> dict[str, Any]:
+        """Scroll left on the screen."""
+        self._client.scroll_left()
+        return {}
+
+    def _action_scroll_right(self, step: TestStep) -> dict[str, Any]:
+        """Scroll right on the screen."""
+        self._client.scroll_right()
+        return {}
+
+    def _action_drag(self, step: TestStep) -> dict[str, Any]:
+        """Drag from one point to another.
+
+        Reads coordinates from metadata.coords:
+          {"start_x":..., "start_y":..., "end_x":..., "end_y":..., "duration":...}
+        Or from input_value as "start_x,start_y,end_x,end_y".
+        """
+        coords = step.metadata.get("coords", {})
+        if coords and isinstance(coords, dict) and "start_x" in coords:
+            sx = int(coords["start_x"])
+            sy = int(coords["start_y"])
+            ex = int(coords["end_x"])
+            ey = int(coords["end_y"])
+            dur = int(coords.get("duration", 1000))
+        elif step.input_value and ',' in (step.input_value or ''):
+            parts = [p.strip() for p in step.input_value.split(',')]
+            if len(parts) < 4:
+                raise ValueError("drag requires 'start_x,start_y,end_x,end_y[,duration]'")
+            sx, sy, ex, ey = int(float(parts[0])), int(float(parts[1])), int(float(parts[2])), int(float(parts[3]))
+            dur = int(float(parts[4])) if len(parts) > 4 else 1000
+        else:
+            raise ValueError("drag requires coords in metadata or input_value as 'start_x,start_y,end_x,end_y'")
+        self._client.drag(sx, sy, ex, ey, dur)
+        return {"actual_value": f"{sx},{sy}->{ex},{ey}"}
 
     def _action_long_press(self, step: TestStep) -> dict[str, Any]:
         """Long press on an element."""

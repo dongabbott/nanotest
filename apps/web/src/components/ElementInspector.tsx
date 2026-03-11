@@ -592,14 +592,17 @@ export default function ElementInspector({ onSelectElement, className = '', devi
   const [activeTab, setActiveTab] = useState<'tree' | 'attributes'>('tree');
   const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
 
-  // 获取活跃 Sessions
+  // 获取活跃 Sessions（含 expired，后端会自动恢复）
   const { data: sessionsData, isLoading: loadingSessions, refetch: refetchSessions } = useQuery({
     queryKey: ['appiumSessions'],
     queryFn: () => devicesApi.listSessions(),
     refetchInterval: 10000,
   });
 
-  const sessions: SessionInfo[] = sessionsData?.data?.sessions || [];
+  const sessions: SessionInfo[] = (sessionsData?.data?.sessions || []).filter(
+    (s: SessionInfo) => s.status === 'active' || s.status === 'expired' || s.status === 'disconnected'
+  );
+
   const selectedSession = sessions.find(s => s.session_id === selectedSessionId);
 
   // 刷新页面源码

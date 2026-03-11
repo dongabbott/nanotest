@@ -18,11 +18,25 @@ from app.schemas.schemas import (
     DeviceUpdate,
 )
 
+import asyncio
+import logging
 import json as _json
 import redis as _sync_redis
 from app.core.config import settings as _settings
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["Devices"])
+
+# Session keepalive interval (seconds). Appium resets its newCommandTimeout
+# each time a command is received, so pinging at this interval keeps sessions
+# alive as long as the backend is running.
+_KEEPALIVE_INTERVAL_SEC = 60
+
+# Default newCommandTimeout set on new sessions (seconds).  This is the
+# Appium-side idle timeout; the keepalive task ensures we always ping before
+# it expires.
+_NEW_COMMAND_TIMEOUT_SEC = 1800
 
 
 # =============================================================================
@@ -253,6 +267,185 @@ _appium_sessions_store = _AppiumSessionStore()
 # Keep the old module-level name so that other modules that import it
 # (e.g. flows.py) can still work – but it now proxies to Redis.
 _appium_sessions: dict = {}  # DEPRECATED – only kept as fallback reference
+
+
+# ---------------------------------------------------------------------------
+# Session keepalive & auto-recovery helpers
+# ---------------------------------------------------------------------------
+
+async def _probe_session_alive(server_url: str, session_id: str) -> bool:
+    """Send a lightweight probe to Appium to check if a session is still alive.
+
+    Uses GET /session/{id} which is cheap and resets newCommandTimeout.
+    Returns True if the session is alive, False otherwise.
+    """
+    import aiohttp
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            url = f"{server_url.rstrip('/')}/session/{session_id}"
+            async with client.get(url) as resp:
+                return resp.status == 200
+    except Exception:
+        return False
+
+
+async def _recreate_session(server_url: str, capabilities: dict) -> Optional[str]:
+    """Attempt to create a new Appium session using saved capabilities.
+
+    Returns the new session_id on success, None on failure.
+    """
+    import aiohttp
+
+    session_url = f"{server_url.rstrip('/')}/session"
+    # Remove appium:app to avoid re-installing; keep appPackage/bundleId
+    caps = dict(capabilities)
+    caps.pop("appium:app", None)
+    # Ensure the large timeout is carried over
+    caps["appium:newCommandTimeout"] = _NEW_COMMAND_TIMEOUT_SEC
+
+    request_body = {
+        "capabilities": {
+            "alwaysMatch": caps,
+            "firstMatch": [{}],
+        }
+    }
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as client:
+            async with client.post(session_url, json=request_body) as resp:
+                data = await resp.json()
+                if resp.status == 200:
+                    return data.get("value", {}).get("sessionId")
+    except Exception as exc:
+        logger.warning("Session recreation failed: %s", exc)
+    return None
+
+
+async def ensure_session_alive(tenant_id: str, session_id: str) -> tuple[str, dict]:
+    """Ensure the given Appium session is alive; recreate transparently if not.
+
+    Returns (effective_session_id, session_info_dict).
+    Raises HTTPException(404) if the session record doesn't exist at all,
+    or HTTPException(503) if recreation also fails.
+    """
+    session_info = _appium_sessions_store.get(tenant_id, session_id)
+    if not session_info:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
+
+    server_url = session_info.get("server_url", "")
+    caps = session_info.get("capabilities", {})
+
+    # Fast path – session is still alive
+    if await _probe_session_alive(server_url, session_id):
+        if session_info.get("status") != "active":
+            _appium_sessions_store.update_field(tenant_id, session_id, "status", "active")
+            session_info["status"] = "active"
+        return session_id, session_info
+
+    # Session expired – try to recreate
+    logger.info(
+        "Session %s expired on Appium server, attempting auto-recovery…",
+        session_id,
+    )
+    new_session_id = await _recreate_session(server_url, caps)
+
+    if not new_session_id:
+        # Mark as disconnected so the UI reflects the real state
+        _appium_sessions_store.update_field(tenant_id, session_id, "status", "expired")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Session expired and auto-recovery failed. Please create a new session.",
+        )
+
+    # Migrate Redis record: copy data under the new session_id, delete the old one
+    session_info["session_id"] = new_session_id
+    session_info["status"] = "active"
+    session_info["created_at"] = datetime.utcnow().isoformat()
+    _appium_sessions_store.set(tenant_id, new_session_id, session_info)
+    _appium_sessions_store.delete(tenant_id, session_id)
+
+    logger.info(
+        "Session auto-recovered: %s → %s",
+        session_id,
+        new_session_id,
+    )
+    return new_session_id, session_info
+
+
+# ---------------------------------------------------------------------------
+# Background keepalive task
+# ---------------------------------------------------------------------------
+
+_keepalive_task: Optional[asyncio.Task] = None
+
+
+async def _keepalive_loop() -> None:
+    """Periodically ping all active Appium sessions to prevent timeout."""
+    import aiohttp
+
+    while True:
+        try:
+            await asyncio.sleep(_KEEPALIVE_INTERVAL_SEC)
+            r = _redis_client()
+            # Scan all session keys across all tenants
+            all_keys = r.keys("appium:session:*")
+
+            for key in all_keys:
+                raw = r.get(key)
+                if not raw:
+                    continue
+                try:
+                    data = _json.loads(raw)
+                except Exception:
+                    continue
+
+                sess_status = data.get("status", "")
+                if sess_status not in ("active", ""):
+                    continue
+
+                server_url = data.get("server_url", "")
+                sid = data.get("session_id") or key.rsplit(":", 1)[-1]
+                if not server_url or not sid:
+                    continue
+
+                alive = await _probe_session_alive(server_url, sid)
+
+                if not alive:
+                    # Extract tenant_id from Redis key pattern appium:session:{tenant}:{sid}
+                    parts = key.split(":")
+                    if len(parts) >= 4:
+                        tenant_id = parts[2]
+                        _appium_sessions_store.update_field(tenant_id, sid, "status", "expired")
+                    logger.info("Keepalive: session %s is no longer alive, marked expired", sid)
+        except asyncio.CancelledError:
+            logger.info("Session keepalive task cancelled")
+            return
+        except Exception as exc:
+            logger.warning("Keepalive loop error (will retry): %s", exc)
+
+
+def start_keepalive_task() -> None:
+    """Start the background keepalive task (idempotent)."""
+    global _keepalive_task
+    if _keepalive_task is None or _keepalive_task.done():
+        loop = asyncio.get_event_loop()
+        _keepalive_task = loop.create_task(_keepalive_loop())
+        logger.info("Session keepalive background task started (interval=%ds)", _KEEPALIVE_INTERVAL_SEC)
+
+
+def stop_keepalive_task() -> None:
+    """Cancel the background keepalive task."""
+    global _keepalive_task
+    if _keepalive_task and not _keepalive_task.done():
+        _keepalive_task.cancel()
+        _keepalive_task = None
+        logger.info("Session keepalive background task stopped")
 
 
 # =============================================================================
@@ -748,10 +941,14 @@ async def start_appium_session(
     
     url = f"{payload.server_url.rstrip('/')}/session"
     
+    # Inject larger newCommandTimeout to prevent premature expiry
+    caps = dict(payload.capabilities)
+    caps.setdefault("appium:newCommandTimeout", _NEW_COMMAND_TIMEOUT_SEC)
+    
     # W3C WebDriver protocol format for Appium 2.x/3.x
     request_body = {
         "capabilities": {
-            "alwaysMatch": payload.capabilities,
+            "alwaysMatch": caps,
             "firstMatch": [{}]
         }
     }
@@ -768,7 +965,7 @@ async def start_appium_session(
                         tenant_key = str(current_user.tenant_id)
                         _appium_sessions_store.set(tenant_key, session_id, {
                             "server_url": payload.server_url,
-                            "capabilities": payload.capabilities,
+                            "capabilities": caps,
                         })
                         return StartSessionResponse(
                             success=True,
@@ -803,20 +1000,19 @@ async def get_page_source(
     import aiohttp
     
     tenant_key = str(current_user.tenant_id)
-    session_info = _appium_sessions_store.get(tenant_key, session_id)
-    
-    if not session_info:
-        return PageSourceResponse(
-            success=False,
-            message="Session not found. Please start a new session.",
-        )
+
+    # Auto-recover if session expired
+    try:
+        effective_sid, session_info = await ensure_session_alive(tenant_key, session_id)
+    except HTTPException as exc:
+        return PageSourceResponse(success=False, message=exc.detail)
     
     server_url = session_info["server_url"]
     
     try:
         timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(timeout=timeout) as client:
-            source_url = f"{server_url.rstrip('/')}/session/{session_id}/source"
+            source_url = f"{server_url.rstrip('/')}/session/{effective_sid}/source"
             async with client.get(source_url) as response:
                 if response.status != 200:
                     return PageSourceResponse(
@@ -826,19 +1022,23 @@ async def get_page_source(
                 source_data = await response.json()
                 page_source = source_data.get("value", "")
             
-            screenshot_url = f"{server_url.rstrip('/')}/session/{session_id}/screenshot"
+            screenshot_url = f"{server_url.rstrip('/')}/session/{effective_sid}/screenshot"
             async with client.get(screenshot_url) as response:
                 screenshot_base64 = None
                 if response.status == 200:
                     screenshot_data = await response.json()
                     screenshot_base64 = screenshot_data.get("value")
             
-            return PageSourceResponse(
+            resp = PageSourceResponse(
                 success=True,
                 source=page_source,
                 screenshot=screenshot_base64,
                 message="Page source retrieved successfully",
             )
+            # If session was recreated, inform the caller
+            if effective_sid != session_id:
+                resp.message += f" (session auto-recovered: {effective_sid})"
+            return resp
     except Exception as e:
         return PageSourceResponse(
             success=False,
@@ -929,7 +1129,7 @@ async def create_session_from_package(
         platform_version = db_device.platform_version or ""
         device_name = db_device.name or db_device.model or payload.device_udid
     
-    # 3. 构建 capabilities
+    # 3. 构建 capabilities (use larger newCommandTimeout)
     caps = {
         "platformName": "iOS" if package.platform == "ios" else "Android",
         "appium:automationName": "UiAutomator2" if package.platform == "android" else "XCUITest",
@@ -937,7 +1137,7 @@ async def create_session_from_package(
         "appium:udid": payload.device_udid,
         "appium:noReset": payload.no_reset,
         "appium:fullReset": payload.full_reset,
-        "appium:newCommandTimeout": 300,
+        "appium:newCommandTimeout": _NEW_COMMAND_TIMEOUT_SEC,
     }
     
     if platform_version:
@@ -1112,20 +1312,23 @@ async def perform_session_action(
     import aiohttp
     
     tenant_key = str(current_user.tenant_id)
-    session_info = _appium_sessions_store.get(tenant_key, session_id)
-    
-    if not session_info:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
-        )
+
+    # Auto-recover if session expired
+    try:
+        effective_sid, session_info = await ensure_session_alive(tenant_key, session_id)
+    except HTTPException as exc:
+        return SessionActionResponse(success=False, message=exc.detail)
     
     server_url = session_info.get("server_url", "")
-    base_url = f"{server_url}/session/{session_id}"
+    base_url = f"{server_url}/session/{effective_sid}"
     
     # Get platform and package info
     platform = session_info.get("platform", "android")
     package_name = session_info.get("package_name") or session_info.get("capabilities", {}).get("appium:appPackage")
+    
+    recovery_note = ""
+    if effective_sid != session_id:
+        recovery_note = " (session auto-recovered)"
     
     try:
         timeout = aiohttp.ClientTimeout(total=30)
@@ -1136,8 +1339,8 @@ async def perform_session_action(
                         data = await response.json()
                         return SessionActionResponse(
                             success=True,
-                            message="Screenshot captured",
-                            data={"screenshot": data.get("value")}
+                            message="Screenshot captured" + recovery_note,
+                            data={"screenshot": data.get("value"), "session_id": effective_sid}
                         )
                     return SessionActionResponse(success=False, message="Failed to capture screenshot")
             
@@ -1147,8 +1350,8 @@ async def perform_session_action(
                         data = await response.json()
                         return SessionActionResponse(
                             success=True,
-                            message="Page source retrieved",
-                            data={"source": data.get("value")}
+                            message="Page source retrieved" + recovery_note,
+                            data={"source": data.get("value"), "session_id": effective_sid}
                         )
                     return SessionActionResponse(success=False, message="Failed to get page source")
             
@@ -1160,7 +1363,7 @@ async def perform_session_action(
                 key = "bundleId" if platform == "ios" else "appId"
                 async with client.post(f"{base_url}/appium/device/activate_app", json={key: app_id}) as response:
                     if response.status == 200:
-                        return SessionActionResponse(success=True, message=f"App {app_id} launched")
+                        return SessionActionResponse(success=True, message=f"App {app_id} launched" + recovery_note)
                     return SessionActionResponse(success=False, message="Failed to launch app")
             
             elif payload.action == "close_app":
@@ -1171,7 +1374,7 @@ async def perform_session_action(
                 key = "bundleId" if platform == "ios" else "appId"
                 async with client.post(f"{base_url}/appium/device/terminate_app", json={key: app_id}) as response:
                     if response.status == 200:
-                        return SessionActionResponse(success=True, message=f"App {app_id} closed")
+                        return SessionActionResponse(success=True, message=f"App {app_id} closed" + recovery_note)
                     return SessionActionResponse(success=False, message="Failed to close app")
             
             elif payload.action == "reset_app":
@@ -1182,10 +1385,10 @@ async def perform_session_action(
                 key = "bundleId" if platform == "ios" else "appId"
                 await client.post(f"{base_url}/appium/device/terminate_app", json={key: app_id})
                 await client.post(f"{base_url}/appium/device/activate_app", json={key: app_id})
-                return SessionActionResponse(success=True, message=f"App {app_id} reset")
+                return SessionActionResponse(success=True, message=f"App {app_id} reset" + recovery_note)
     
     except aiohttp.ClientError as e:
-        _appium_sessions_store.update_field(tenant_key, session_id, "status", "disconnected")
+        _appium_sessions_store.update_field(tenant_key, effective_sid, "status", "disconnected")
         return SessionActionResponse(success=False, message=f"Connection error: {str(e)}")
     except Exception as e:
         return SessionActionResponse(success=False, message=f"Error: {str(e)}")

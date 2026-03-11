@@ -33,11 +33,14 @@ function TriggerRunModal({
     queryKey: ['activeSessions'],
     queryFn: () => devicesApi.listSessions(),
     enabled: isOpen,
+    refetchInterval: 10000, // 每 10 秒刷新，及时反映 keepalive 状态变化
   });
 
   const flows = flowsData?.data?.items || [];
-  const sessions = (sessionsData?.data?.sessions || []).filter(
-    (s: any) => s.status === 'active'
+  // Show active sessions first, then expired/disconnected (for transparency)
+  const allSessions = sessionsData?.data?.sessions || [];
+  const sessions = allSessions.filter(
+    (s: any) => s.status === 'active' || s.status === 'expired' || s.status === 'disconnected'
   );
 
   const triggerMutation = useMutation({
@@ -139,11 +142,15 @@ function TriggerRunModal({
                 required
               >
                 <option value="">-- 请选择会话 --</option>
-                {sessions.map((session: any) => (
-                  <option key={session.session_id} value={session.session_id}>
-                    {session.app_name || session.package_name || '未知应用'} · {session.device_name || session.device_udid} ({session.platform})
-                  </option>
-                ))}
+                {sessions.map((session: any) => {
+                  const isExpired = session.status === 'expired' || session.status === 'disconnected';
+                  const statusLabel = isExpired ? ' ⚠️ 已过期(将自动恢复)' : ' ✅';
+                  return (
+                    <option key={session.session_id} value={session.session_id}>
+                      {session.app_name || session.package_name || '未知应用'} · {session.device_name || session.device_udid} ({session.platform}){statusLabel}
+                    </option>
+                  );
+                })}
               </select>
             )}
             {selectedSessionId && (

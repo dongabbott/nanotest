@@ -51,6 +51,7 @@ export function SessionList({ sessions, isLoading, onRefresh, onActionResult }: 
     switch (status) {
       case 'active': return 'bg-green-100 text-green-800';
       case 'disconnected': return 'bg-yellow-100 text-yellow-800';
+      case 'expired': return 'bg-orange-100 text-orange-800';
       case 'error': return 'bg-red-100 text-red-800';
       default: return 'bg-gray-100 text-gray-800';
     }
@@ -60,6 +61,7 @@ export function SessionList({ sessions, isLoading, onRefresh, onActionResult }: 
     switch (status) {
       case 'active': return '活跃';
       case 'disconnected': return '已断开';
+      case 'expired': return '已过期(可自动恢复)';
       case 'error': return '错误';
       default: return status;
     }

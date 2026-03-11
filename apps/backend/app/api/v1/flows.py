@@ -527,20 +527,25 @@ async def create_flow_run(
         )
 
     if payload.appium_session_id:
-        from app.api.v1.devices import _appium_sessions_store
+        from app.api.v1.devices import _appium_sessions_store, ensure_session_alive
 
         tenant_key = str(current_user.tenant_id)
-        session_info = _appium_sessions_store.get(tenant_key, payload.appium_session_id)
-        if not session_info:
+
+        # Auto-recover the session if it has expired on the Appium server
+        try:
+            effective_sid, session_info = await ensure_session_alive(
+                tenant_key, payload.appium_session_id
+            )
+        except HTTPException as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Appium session not found",
+                detail=f"Appium session unusable: {exc.detail}",
             )
 
         caps = session_info.get("capabilities") or {}
         env_config["use_real_runner"] = True
         env_config["appium_server_url"] = session_info.get("server_url")
-        env_config["appium_session_id"] = payload.appium_session_id
+        env_config["appium_session_id"] = effective_sid
 
         # Platform info — from session top-level fields first, then caps
         platform = (

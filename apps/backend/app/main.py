@@ -84,7 +84,14 @@ async def lifespan(app: FastAPI):
         await init_db()
         await create_dev_data()
     
+    # Start Appium session keepalive background task
+    from app.api.v1.devices import start_keepalive_task, stop_keepalive_task
+    start_keepalive_task()
+    
     yield
+
+    # Shutdown
+    stop_keepalive_task()
     logger.info("Shutting down application")
 
 

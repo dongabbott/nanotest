@@ -75,16 +75,17 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                     logger.exception("AI screenshot download failed", run_id=run_id, step_id=step.id)
                     continue
 
-                # Pre-fetch page source XML URL for page_structure analysis
-                page_source_url: str | None = None
+                # Pre-fetch page source XML content for page_structure analysis
+                page_source_xml: str | None = None
                 if "page_structure" in analysis_types and step.page_source_object_key:
                     try:
-                        page_source_url = oss_client.get_download_url(
-                            step.page_source_object_key, expires=3600
+                        page_source_bytes = oss_client.download_bytes(
+                            step.page_source_object_key
                         )
+                        page_source_xml = page_source_bytes.decode("utf-8")
                     except Exception as e:
                         logger.warning(
-                            "Failed to generate presign URL for page source XML, "
+                            "Failed to download page source XML, "
                             "page_structure analysis will be skipped for this step",
                             step_id=step.id,
                             error=str(e),
@@ -94,8 +95,8 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
                     try:
                         # Route to the appropriate LLM method
                         if analysis_type == "page_structure":
-                            if not page_source_url:
-                                skip_reason = "page_source_object_key is empty or presign URL generation failed"
+                            if not page_source_xml:
+                                skip_reason = "page_source_object_key is empty or XML download failed"
                                 db.add(
                                     ScreenAnalysis(
                                         test_step_result_id=step.id,
@@ -124,7 +125,7 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
 
                             ai_result = await llm_client.analyze_page_structure(
                                 screenshot_bytes,
-                                page_source_url,
+                                page_source_xml,
                             )
                         else:
                             ai_result = await llm_client.analyze_screenshot(
