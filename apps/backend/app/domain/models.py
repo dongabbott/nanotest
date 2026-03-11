@@ -100,6 +100,115 @@ class Project(Base, TimestampMixin, SoftDeleteMixin):
     test_plans: Mapped[list["TestPlan"]] = relationship("TestPlan", back_populates="project")
     test_runs: Mapped[list["TestRun"]] = relationship("TestRun", back_populates="project")
     app_packages: Mapped[list["AppPackage"]] = relationship("AppPackage", back_populates="project")
+    requirements: Mapped[list["Requirement"]] = relationship("Requirement", back_populates="project")
+
+
+class Requirement(Base, TimestampMixin, SoftDeleteMixin):
+    """Project requirement with versioned searchable content."""
+    __tablename__ = "requirements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    acceptance_criteria: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    business_rules: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+    source_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    platform: Mapped[str] = mapped_column(String(20), nullable=False, default="common")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+    project: Mapped["Project"] = relationship("Project", back_populates="requirements")
+    versions: Mapped[list["RequirementVersion"]] = relationship("RequirementVersion", back_populates="requirement")
+    chunks: Mapped[list["RequirementChunk"]] = relationship("RequirementChunk", back_populates="requirement")
+    links: Mapped[list["RequirementLink"]] = relationship("RequirementLink", back_populates="requirement")
+
+    __table_args__ = (
+        Index("ix_requirements_tenant_project_status", "tenant_id", "project_id", "status"),
+        Index("ix_requirements_project_priority", "project_id", "priority"),
+        Index("ix_requirements_project_updated", "project_id", "updated_at"),
+        Index("uq_requirements_project_key", "project_id", "key", unique=True),
+    )
+
+
+class RequirementVersion(Base, TimestampMixin):
+    """Versioned snapshot of requirement content."""
+    __tablename__ = "requirement_versions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    requirement_id: Mapped[str] = mapped_column(String(36), ForeignKey("requirements.id"), nullable=False)
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    change_log: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+    requirement: Mapped["Requirement"] = relationship("Requirement", back_populates="versions")
+
+    __table_args__ = (
+        Index("uq_requirement_versions_requirement_version", "requirement_id", "version_no", unique=True),
+    )
+
+
+class RequirementChunk(Base, TimestampMixin):
+    """Chunked requirement text used for embedding search."""
+    __tablename__ = "requirement_chunks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+    requirement_id: Mapped[str] = mapped_column(String(36), ForeignKey("requirements.id"), nullable=False)
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    embedding: Mapped[Optional[list[float]]] = mapped_column(JSON, nullable=True)
+    embedding_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    embedding_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    requirement: Mapped["Requirement"] = relationship("Requirement", back_populates="chunks")
+
+    __table_args__ = (
+        Index("ix_requirement_chunks_project_requirement_version", "project_id", "requirement_id", "version_no"),
+        Index("ix_requirement_chunks_project_status", "project_id", "embedding_status"),
+        Index("ix_requirement_chunks_project_type", "project_id", "chunk_type"),
+        Index("uq_requirement_chunks_requirement_index", "requirement_id", "version_no", "chunk_index", unique=True),
+    )
+
+
+class RequirementLink(Base, TimestampMixin):
+    """Traceability link between requirements and test assets."""
+    __tablename__ = "requirement_links"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+    requirement_id: Mapped[str] = mapped_column(String(36), ForeignKey("requirements.id"), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    link_type: Mapped[str] = mapped_column(String(30), nullable=False, default="covers")
+    confidence: Mapped[float] = mapped_column(Numeric(4, 3), nullable=False, default=1.0)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+    requirement: Mapped["Requirement"] = relationship("Requirement", back_populates="links")
+
+    __table_args__ = (
+        Index("ix_requirement_links_requirement_target", "requirement_id", "target_type", "target_id"),
+        Index("ix_requirement_links_project_target", "project_id", "target_type", "target_id"),
+        Index("uq_requirement_links_unique", "requirement_id", "target_type", "target_id", "link_type", unique=True),
+    )
 
 
 # =============================================================================

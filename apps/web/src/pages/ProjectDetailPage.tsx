@@ -8,7 +8,8 @@ import {
   Play,
   Calendar,
   GitCompare,
-  ChevronLeft
+  ChevronLeft,
+  BookText
 } from 'lucide-react';
 import { projectsApi } from '../services/api';
 
@@ -32,13 +33,16 @@ export default function ProjectDetailPage() {
     }
   }, [error, navigate]);
 
+  const basePath = projectId ? `/projects/${projectId}` : '/projects';
+
   const navItems = [
-    { to: 'dashboard', icon: LayoutDashboard, label: '仪表盘' },
-    { to: 'cases', icon: FileCode, label: '测试用例' },
-    { to: 'flows', icon: GitBranch, label: '测试流程' },
-    { to: 'runs', icon: Play, label: '执行记录' },
-    { to: 'plans', icon: Calendar, label: '测试计划' },
-    { to: 'comparison', icon: GitCompare, label: '运行对比' },
+    { to: `${basePath}/dashboard`, icon: LayoutDashboard, label: '仪表盘' },
+    { to: `${basePath}/requirements`, icon: BookText, label: '需求管理' },
+    { to: `${basePath}/cases`, icon: FileCode, label: '测试用例' },
+    { to: `${basePath}/flows`, icon: GitBranch, label: '测试流程' },
+    { to: `${basePath}/runs`, icon: Play, label: '执行记录' },
+    { to: `${basePath}/plans`, icon: Calendar, label: '测试计划' },
+    { to: `${basePath}/comparison`, icon: GitCompare, label: '运行对比' },
   ];
 
   return (

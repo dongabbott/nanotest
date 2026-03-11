@@ -16,9 +16,34 @@ class LLMClient:
         if settings.llm_base_url:
             client_kwargs["base_url"] = settings.llm_base_url
 
-        self._client = AsyncOpenAI(api_key=settings.openai_api_key, **client_kwargs)
-        self.model = settings.openai_model
+        self._client = AsyncOpenAI(api_key=settings.llm_api_key, **client_kwargs)
+        self.model = settings.llm_chat_model
+        self.embedding_model = settings.llm_embedding_model
+        self.embedding_dimensions = settings.llm_embedding_dimensions
         self.timeout = settings.ai_analysis_timeout
+
+    async def create_embedding(
+        self,
+        text: str,
+        model: Optional[str] = None,
+    ) -> list[float]:
+        """Create an embedding vector for text."""
+        kwargs: dict[str, Any] = {
+            "model": model or self.embedding_model,
+            "input": text,
+            "timeout": self.timeout,
+        }
+
+        if self.embedding_dimensions:
+            kwargs["dimensions"] = self.embedding_dimensions
+
+        try:
+            response = await self._client.embeddings.create(**kwargs)
+        except TypeError:
+            kwargs.pop("dimensions", None)
+            response = await self._client.embeddings.create(**kwargs)
+
+        return list(response.data[0].embedding)
 
     def _png_data_url(self, png_bytes: bytes) -> str:
         image_base64 = base64.b64encode(png_bytes).decode("utf-8")

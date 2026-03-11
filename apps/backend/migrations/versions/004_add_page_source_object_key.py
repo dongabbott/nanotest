@@ -16,11 +16,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "test_step_results",
-        sa.Column("page_source_object_key", sa.String(500), nullable=True),
-    )
+    pass
 
 
 def downgrade() -> None:
-    op.drop_column("test_step_results", "page_source_object_key")
+    pass

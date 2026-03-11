@@ -143,6 +143,110 @@ class ProjectListResponse(BaseModel):
     page_size: int
 
 
+class RequirementBase(BaseModel):
+    """Base requirement schema."""
+    key: str = Field(..., min_length=1, max_length=100)
+    title: str = Field(..., min_length=1, max_length=500)
+    description: Optional[str] = None
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    business_rules: list[str] = Field(default_factory=list)
+    priority: str = Field(default="medium", pattern="^(low|medium|high|critical)$")
+    status: str = Field(default="draft", pattern="^(draft|active|deprecated|archived)$")
+    source_type: str = Field(default="manual", pattern="^(manual|imported|synced)$")
+    source_ref: Optional[str] = Field(default=None, max_length=255)
+    platform: str = Field(default="common", pattern="^(android|ios|hybrid|common)$")
+    tags: list[str] = Field(default_factory=list)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class RequirementCreate(RequirementBase):
+    """Requirement creation schema."""
+    change_log: Optional[str] = None
+
+
+class RequirementUpdate(BaseModel):
+    """Requirement update schema."""
+    key: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    title: Optional[str] = Field(default=None, min_length=1, max_length=500)
+    description: Optional[str] = None
+    acceptance_criteria: Optional[list[str]] = None
+    business_rules: Optional[list[str]] = None
+    priority: Optional[str] = Field(default=None, pattern="^(low|medium|high|critical)$")
+    status: Optional[str] = Field(default=None, pattern="^(draft|active|deprecated|archived)$")
+    source_type: Optional[str] = Field(default=None, pattern="^(manual|imported|synced)$")
+    source_ref: Optional[str] = Field(default=None, max_length=255)
+    platform: Optional[str] = Field(default=None, pattern="^(android|ios|hybrid|common)$")
+    tags: Optional[list[str]] = None
+    metadata_json: Optional[dict[str, Any]] = None
+    change_log: Optional[str] = None
+
+
+class RequirementResponse(RequirementBase, TimestampSchema):
+    """Requirement response schema."""
+    id: UUID
+    tenant_id: UUID
+    project_id: UUID
+    version: int
+    created_by: Optional[UUID]
+    updated_by: Optional[UUID]
+
+
+class RequirementListResponse(BaseModel):
+    """Requirement list response schema."""
+    items: list[RequirementResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class RequirementLinkCreate(BaseModel):
+    """Requirement link creation schema."""
+    target_type: str = Field(..., pattern="^(test_case|test_flow|test_run|defect)$")
+    target_id: UUID
+    link_type: str = Field(default="covers", pattern="^(covers|derived_from|validated_by|failed_against)$")
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    source: str = Field(default="manual", pattern="^(manual|ai|sync)$")
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class RequirementLinkResponse(TimestampSchema):
+    """Requirement link response schema."""
+    id: UUID
+    tenant_id: UUID
+    project_id: UUID
+    requirement_id: UUID
+    target_type: str
+    target_id: UUID
+    link_type: str
+    confidence: float
+    source: str
+    metadata_json: dict[str, Any]
+    created_by: Optional[UUID]
+
+
+class RequirementSearchRequest(BaseModel):
+    """Requirement semantic search request."""
+    query: str = Field(..., min_length=1, max_length=1000)
+    top_k: int = Field(default=10, ge=1, le=50)
+    status: Optional[str] = Field(default=None, pattern="^(draft|active|deprecated|archived)$")
+    priority: Optional[str] = Field(default=None, pattern="^(low|medium|high|critical)$")
+    platform: Optional[str] = Field(default=None, pattern="^(android|ios|hybrid|common)$")
+    version: Optional[int] = Field(default=None, ge=1)
+
+
+class RequirementSearchHit(BaseModel):
+    """A requirement search result."""
+    requirement: RequirementResponse
+    score: float
+    matched_chunks: list[str] = Field(default_factory=list)
+
+
+class RequirementSearchResponse(BaseModel):
+    """Requirement search response."""
+    items: list[RequirementSearchHit]
+    total: int
+
+
 # =============================================================================
 # Test Case Schemas
 # =============================================================================

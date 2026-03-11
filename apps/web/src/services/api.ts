@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 // Create axios instance
 const apiClient = axios.create({
@@ -50,6 +50,53 @@ export const projectsApi = {
   update: (id: string, data: Partial<{ name: string; platform: string }>) =>
     apiClient.patch(`/api/v1/projects/${id}`, data),
   delete: (id: string) => apiClient.delete(`/api/v1/projects/${id}`),
+};
+
+// Requirements API
+export const requirementsApi = {
+  list: (projectId: string, params?: { page?: number; page_size?: number; status?: string; priority?: string; q?: string }) =>
+    apiClient.get(`/api/v1/projects/${projectId}/requirements`, { params }),
+  get: (id: string) => apiClient.get(`/api/v1/requirements/${id}`),
+  create: (projectId: string, data: {
+    key: string;
+    title: string;
+    description?: string;
+    acceptance_criteria?: string[];
+    business_rules?: string[];
+    priority?: string;
+    status?: string;
+    source_type?: string;
+    source_ref?: string;
+    platform?: string;
+    tags?: string[];
+    metadata_json?: Record<string, unknown>;
+    change_log?: string;
+  }) => apiClient.post(`/api/v1/projects/${projectId}/requirements`, data),
+  update: (id: string, data: Partial<{
+    key: string;
+    title: string;
+    description: string;
+    acceptance_criteria: string[];
+    business_rules: string[];
+    priority: string;
+    status: string;
+    source_type: string;
+    source_ref: string;
+    platform: string;
+    tags: string[];
+    metadata_json: Record<string, unknown>;
+    change_log: string;
+  }>) => apiClient.patch(`/api/v1/requirements/${id}`, data),
+  delete: (id: string) => apiClient.delete(`/api/v1/requirements/${id}`),
+  search: (projectId: string, data: {
+    query: string;
+    top_k?: number;
+    status?: string;
+    priority?: string;
+    platform?: string;
+    version?: number;
+  }) => apiClient.post(`/api/v1/projects/${projectId}/requirements/search`, data),
+  reindex: (id: string) => apiClient.post(`/api/v1/requirements/${id}/reindex`),
 };
 
 // Test Cases API

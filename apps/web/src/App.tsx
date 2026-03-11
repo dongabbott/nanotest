@@ -7,6 +7,7 @@ import LoginPage from './pages/LoginPage';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 import DashboardPage from './pages/DashboardPage';
+import RequirementsPage from './pages/RequirementsPage';
 import TestCasesPage from './pages/TestCasesPage';
 import TestFlowsPage from './pages/TestFlowsPage';
 import TestRunsPage from './pages/TestRunsPage';
@@ -66,6 +67,7 @@ function AppRoutes() {
         <Route path="projects/:projectId" element={<ProjectDetailPage />}>
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="requirements" element={<RequirementsPage />} />
           <Route path="cases" element={<TestCasesPage />} />
           <Route path="flows" element={<TestFlowsPage />} />
           <Route path="runs" element={<TestRunsPage />} />

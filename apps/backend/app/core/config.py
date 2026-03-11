@@ -1,6 +1,6 @@
 """Application configuration using Pydantic Settings."""
 from functools import lru_cache
-from typing import Optional, Any
+from typing import Any, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -50,18 +50,26 @@ class Settings(BaseSettings):
     appium_session_timeout: int = 300
     
     # AI/LLM
-    llm_provider: str = "openai"  # openai|doubao|ark|other(openai-compatible)
+    llm_provider: str = "doubao"  # doubao|qwen
 
-    # Volcengine Ark (Doubao) OpenAI-compatible settings
-    ark_api_key: Optional[str] = "1b783983-5e9b-4321-9921-ad4ac5b41dda"
-    ark_base_url: Optional[str] = "https://ark.cn-beijing.volces.com/api/v3"  # e.g. https://ark.cn-beijing.volces.com/api/v3
-    ark_model: Optional[str] = "doubao-seed-2-0-pro-260215"  # e.g. doubao-seed-2-0-pro-260215
+    # Volcengine Doubao / Ark (OpenAI-compatible)
+    doubao_api_key: Optional[str] = None
+    doubao_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    doubao_chat_model: str = "doubao-seed-2-0-pro-260215"
+    doubao_embedding_model: str = "doubao-embedding-vision-251215"
 
-    # OpenAI-compatible settings (used by the SDK client)
-    llm_base_url: Optional[str] = None  # if set, used as OpenAI-compatible base_url
+    # Aliyun Qwen / DashScope compatible-mode
+    qwen_api_key: Optional[str] = None
+    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    qwen_chat_model: str = "qwen-plus"
+    qwen_embedding_model: str = "text-embedding-v3"
 
-    openai_api_key: Optional[str] = None
-    openai_model: str = "gpt-4-vision-preview"
+    # Effective provider settings resolved from llm_provider
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
+    llm_chat_model: str = ""
+    llm_embedding_model: str = ""
+    llm_embedding_dimensions: int = 1536
     ai_analysis_timeout: int = 120
     
     # Logging
@@ -71,19 +79,30 @@ class Settings(BaseSettings):
     app_package_storage_dir: str = "storage/app_packages"
 
     def model_post_init(self, __context: Any) -> None:
-        """Derive effective OpenAI-compatible config from Ark/OpenAI env vars.
+        """Resolve active provider settings."""
+        provider = (self.llm_provider or "doubao").strip().lower()
 
-        Priority:
-        - If OPENAI_* explicitly provided, use them.
-        - Else if ARK_* provided, map to effective OPENAI_* and base_url.
-        - Else keep defaults.
-        """
-        if not self.openai_api_key and self.ark_api_key:
-            self.openai_api_key = self.ark_api_key
-        if (not self.llm_base_url) and self.ark_base_url:
-            self.llm_base_url = self.ark_base_url
-        if (self.openai_model == "gpt-4-vision-preview") and self.ark_model:
-            self.openai_model = self.ark_model
+        provider_map = {
+            "doubao": {
+                "api_key": self.doubao_api_key,
+                "base_url": self.doubao_base_url,
+                "chat_model": self.doubao_chat_model,
+                "embedding_model": self.doubao_embedding_model,
+            },
+            "qwen": {
+                "api_key": self.qwen_api_key,
+                "base_url": self.qwen_base_url,
+                "chat_model": self.qwen_chat_model,
+                "embedding_model": self.qwen_embedding_model,
+            },
+        }
+
+        resolved = provider_map.get(provider, provider_map["doubao"])
+        self.llm_provider = provider if provider in provider_map else "doubao"
+        self.llm_api_key = resolved["api_key"]
+        self.llm_base_url = resolved["base_url"]
+        self.llm_chat_model = resolved["chat_model"]
+        self.llm_embedding_model = resolved["embedding_model"]
 
 
 @lru_cache

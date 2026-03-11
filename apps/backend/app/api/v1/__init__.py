@@ -6,6 +6,7 @@ from app.api.v1.cases import router as cases_router
 from app.api.v1.devices import router as devices_router
 from app.api.v1.flows import router as flows_router
 from app.api.v1.projects import router as projects_router
+from app.api.v1.requirements import router as requirements_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.runs import router as runs_router
 from app.api.v1.websocket import router as ws_router
@@ -18,6 +19,7 @@ api_router = APIRouter()
 # Include all routers
 api_router.include_router(auth_router)
 api_router.include_router(projects_router)
+api_router.include_router(requirements_router)
 api_router.include_router(devices_router)
 api_router.include_router(cases_router)
 api_router.include_router(flows_router)

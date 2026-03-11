@@ -264,9 +264,13 @@ Risk Signals:
             from openai import AsyncOpenAI
             from app.core.config import settings
             
-            client = AsyncOpenAI(api_key=settings.openai_api_key)
+            client_kwargs = {}
+            if settings.llm_base_url:
+                client_kwargs["base_url"] = settings.llm_base_url
+
+            client = AsyncOpenAI(api_key=settings.llm_api_key, **client_kwargs)
             response = await client.chat.completions.create(
-                model=settings.openai_model.replace("-vision", ""),  # Use non-vision model
+                model=settings.llm_chat_model,
                 messages=[
                     {"role": "system", "content": template["system"]},
                     {"role": "user", "content": summary_text}
@@ -289,7 +293,7 @@ Risk Signals:
                 result=result_json,
                 confidence=0.9,
                 latency_ms=latency_ms,
-                model_name=settings.openai_model,
+                model_name=settings.llm_chat_model,
                 prompt_version=template["version"]
             )
         except Exception as e:
