@@ -114,9 +114,21 @@ ln -sf "web-${TIMESTAMP}.log" "$PROJECT_ROOT/logs/web.log"
 # 启动函数
 # ============================================================
 start_backend() {
-    local cmd="cd \"$PROJECT_ROOT/apps/backend\" && source .venv/bin/activate && echo '=== Running migrations ===' && alembic upgrade head && echo '=== Starting uvicorn ===' && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app"
+    local script="$PROJECT_ROOT/logs/start_backend_${TIMESTAMP}.sh"
+    cat > "$script" <<EOF
+#!/bin/bash
+set -e
+cd "$PROJECT_ROOT/apps/backend"
+source .venv/bin/activate
+echo '=== Running migrations ==='
+alembic upgrade head
+echo '=== Starting uvicorn ==='
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app 2>&1 | tee -a "$LOG_BACKEND"
+EOF
+    chmod +x "$script"
+
     if [ "$HEADLESS" = "true" ]; then
-        nohup "$LOGIN_SHELL" -lic "$cmd" > "$LOG_BACKEND" 2>&1 &
+        nohup "$LOGIN_SHELL" -lic "$script" > "$LOG_BACKEND" 2>&1 &
         echo $! > "$PROJECT_ROOT/logs/backend.pid"
         echo -e "${GREEN}  Backend PID: $!${NC}"
         echo -e "${GRAY}  Log: $LOG_BACKEND${NC}"
@@ -124,7 +136,7 @@ start_backend() {
         osascript <<EOF
 tell application "Terminal"
     activate
-    do script "${INIT_SHELL}$cmd 2>&1 | tee -a \"$LOG_BACKEND\""
+    do script "bash \"$script\""
     set name of front window to "NanoTest Backend"
 end tell
 EOF
@@ -133,9 +145,18 @@ EOF
 }
 
 start_worker() {
-    local cmd="cd \"$PROJECT_ROOT/apps/backend\" && source .venv/bin/activate && celery -A app.tasks.celery_app worker --loglevel=info"
+    local script="$PROJECT_ROOT/logs/start_worker_${TIMESTAMP}.sh"
+    cat > "$script" <<EOF
+#!/bin/bash
+set -e
+cd "$PROJECT_ROOT/apps/backend"
+source .venv/bin/activate
+celery -A app.tasks.celery_app worker --loglevel=info 2>&1 | tee -a "$LOG_WORKER"
+EOF
+    chmod +x "$script"
+
     if [ "$HEADLESS" = "true" ]; then
-        nohup "$LOGIN_SHELL" -lic "$cmd" > "$LOG_WORKER" 2>&1 &
+        nohup "$LOGIN_SHELL" -lic "$script" > "$LOG_WORKER" 2>&1 &
         echo $! > "$PROJECT_ROOT/logs/worker.pid"
         echo -e "${GREEN}  Worker PID: $!${NC}"
         echo -e "${GRAY}  Log: $LOG_WORKER${NC}"
@@ -143,7 +164,7 @@ start_worker() {
         osascript <<EOF
 tell application "Terminal"
     activate
-    do script "${INIT_SHELL}$cmd 2>&1 | tee -a \"$LOG_WORKER\""
+    do script "bash \"$script\""
     set name of front window to "NanoTest Worker"
 end tell
 EOF
@@ -152,9 +173,17 @@ EOF
 }
 
 start_web() {
-    local cmd="cd \"$PROJECT_ROOT/apps/web\" && npm run dev"
+    local script="$PROJECT_ROOT/logs/start_web_${TIMESTAMP}.sh"
+    cat > "$script" <<EOF
+#!/bin/bash
+set -e
+cd "$PROJECT_ROOT/apps/web"
+npm run dev 2>&1 | tee -a "$LOG_WEB"
+EOF
+    chmod +x "$script"
+
     if [ "$HEADLESS" = "true" ]; then
-        nohup "$LOGIN_SHELL" -lic "$cmd" > "$LOG_WEB" 2>&1 &
+        nohup "$LOGIN_SHELL" -lic "$script" > "$LOG_WEB" 2>&1 &
         echo $! > "$PROJECT_ROOT/logs/web.pid"
         echo -e "${GREEN}  Web PID: $!${NC}"
         echo -e "${GRAY}  Log: $LOG_WEB${NC}"
@@ -162,7 +191,7 @@ start_web() {
         osascript <<EOF
 tell application "Terminal"
     activate
-    do script "${INIT_SHELL}$cmd 2>&1 | tee -a \"$LOG_WEB\""
+    do script "bash \"$script\""
     set name of front window to "NanoTest Web"
 end tell
 EOF
