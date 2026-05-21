@@ -1,3 +1,4 @@
+from __future__ import annotations
 # filepath: d:\project\nanotest\apps\backend\app\services\test_run_service.py
 """Test run service for business logic."""
 from datetime import datetime

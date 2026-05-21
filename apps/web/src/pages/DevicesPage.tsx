@@ -494,6 +494,15 @@ export default function DevicesPage() {
     result: any;
   } | null>(null);
 
+  // WiFi ADB 连接
+  const [showConnectWifiModal, setShowConnectWifiModal] = useState(false);
+  const [wifiHost, setWifiHost] = useState('');
+  const [wifiPort, setWifiPort] = useState('5555');
+  const [wifiPairPort, setWifiPairPort] = useState('');
+  const [wifiPairingCode, setWifiPairingCode] = useState('');
+  const [wifiResult, setWifiResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isConnectingWifi, setIsConnectingWifi] = useState(false);
+
   // 数据查询
   const { data: remoteServersData, isLoading: isLoadingServers } = useQuery({
     queryKey: ['remoteServers'],
@@ -539,6 +548,36 @@ export default function DevicesPage() {
       setLocalDevices(response.data?.devices || []);
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const handleConnectWifi = async () => {
+    if (!wifiHost.trim()) return;
+    setIsConnectingWifi(true);
+    setWifiResult(null);
+    try {
+      const payload: { host: string; port: number; pair_port?: number; pairing_code?: string } = {
+        host: wifiHost.trim(),
+        port: parseInt(wifiPort, 10) || 5555,
+      };
+      if (wifiPairPort.trim() && wifiPairingCode.trim()) {
+        payload.pair_port = parseInt(wifiPairPort, 10);
+        payload.pairing_code = wifiPairingCode.trim();
+      }
+      const response = await devicesApi.connectWifiDevice(payload);
+      const data = response.data;
+      setWifiResult({ success: data.success, message: data.message });
+      if (data.success) {
+        // 连接成功后自动刷新设备列表
+        setTimeout(() => handleScanLocal(), 500);
+      }
+    } catch (err: any) {
+      setWifiResult({
+        success: false,
+        message: err?.response?.data?.detail || err?.message || '连接失败',
+      });
+    } finally {
+      setIsConnectingWifi(false);
     }
   };
 
@@ -638,6 +677,7 @@ export default function DevicesPage() {
               devices={localDevices}
               isLoading={isScanning}
               onRefresh={handleScanLocal}
+              onConnectWifi={() => setShowConnectWifiModal(true)}
             />
 
             {/* 连接的设备卡片 */}
@@ -797,6 +837,105 @@ export default function DevicesPage() {
         action={sessionActionResult?.action || ''}
         result={sessionActionResult?.result}
       />
+
+      {/* 连接 WiFi ADB 设备弹窗 */}
+      {showConnectWifiModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-lg font-semibold text-gray-900">连接 WiFi ADB 设备</h2>
+              <button
+                onClick={() => { setShowConnectWifiModal(false); setWifiResult(null); setWifiPairPort(''); setWifiPairingCode(''); }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">IP 地址</label>
+                <input
+                  type="text"
+                  value={wifiHost}
+                  onChange={(e) => setWifiHost(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="例如：192.168.2.58"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">配对端口 (pair)</label>
+                  <input
+                    type="number"
+                    value={wifiPairPort}
+                    onChange={(e) => setWifiPairPort(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="例如：37411"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">配对码</label>
+                  <input
+                    type="text"
+                    value={wifiPairingCode}
+                    onChange={(e) => setWifiPairingCode(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="设备上显示的配对码"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">连接端口 (connect)</label>
+                <input
+                  type="number"
+                  value={wifiPort}
+                  onChange={(e) => setWifiPort(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="46263"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Android 11+ 需先填写上方配对端口+配对码完成配对，再填写连接端口进行连接
+                </p>
+              </div>
+
+              {wifiResult && (
+                <div className={`p-4 rounded-lg ${wifiResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                  <div className="flex items-center gap-2">
+                    {wifiResult.success ? (
+                      <CheckCircle size={18} className="text-green-600" />
+                    ) : (
+                      <XCircle size={18} className="text-red-600" />
+                    )}
+                    <span className={`font-medium ${wifiResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                      {wifiResult.message}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => { setShowConnectWifiModal(false); setWifiResult(null); setWifiPairPort(''); setWifiPairingCode(''); }}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  关闭
+                </button>
+                <button
+                  onClick={handleConnectWifi}
+                  disabled={!wifiHost.trim() || isConnectingWifi}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isConnectingWifi && <Loader2 size={18} className="animate-spin" />}
+                  {isConnectingWifi ? '处理中...' : (wifiPairPort.trim() && wifiPairingCode.trim() ? '配对并连接' : '连接')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

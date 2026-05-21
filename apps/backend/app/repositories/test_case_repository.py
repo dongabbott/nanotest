@@ -1,3 +1,4 @@
+from __future__ import annotations
 # filepath: d:\project\nanotest\apps\backend\app\repositories\test_case_repository.py
 from typing import List, Optional
 from uuid import UUID

@@ -1,4 +1,5 @@
 """AI Analysis Service for screen and test analysis."""
+from __future__ import annotations
 import time
 from dataclasses import dataclass
 from enum import Enum

@@ -1,4 +1,5 @@
 """LLM client integration for AI-powered analysis."""
+from __future__ import annotations
 import base64
 import time
 from typing import Any, Optional

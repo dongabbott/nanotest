@@ -5,6 +5,7 @@ Revises: 001_add_app_packages
 Create Date: 2026-02-25
 
 """
+from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 

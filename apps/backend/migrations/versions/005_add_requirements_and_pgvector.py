@@ -5,6 +5,7 @@ Revises: 004_add_page_source_object_key
 Create Date: 2026-03-11
 
 """
+from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 

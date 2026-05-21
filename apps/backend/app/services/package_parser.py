@@ -1,4 +1,5 @@
 """App package parsing service for APK and IPA files."""
+from __future__ import annotations
 import hashlib
 import io
 import os

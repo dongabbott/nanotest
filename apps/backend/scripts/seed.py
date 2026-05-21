@@ -1,4 +1,5 @@
 """Seed script to create initial data."""
+from __future__ import annotations
 import asyncio
 import uuid
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker

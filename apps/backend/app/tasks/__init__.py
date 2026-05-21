@@ -1,4 +1,5 @@
 """Celery tasks package."""
+from __future__ import annotations
 from app.tasks.celery_app import celery_app
 from app.tasks.analysis import (
     analyze_test_run,

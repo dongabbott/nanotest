@@ -195,6 +195,9 @@ export const devicesApi = {
   scanLocalDevices: () =>
     apiClient.post('/api/v1/devices/scan-local'),
 
+  connectWifiDevice: (data: { host: string; port: number; pair_port?: number; pairing_code?: string }) =>
+    apiClient.post('/api/v1/devices/connect-wifi', data),
+
   installPackage: (data: { udid: string; platform: 'android' | 'ios'; package_id: string }) =>
     apiClient.post('/api/v1/devices/install-package', data),
   

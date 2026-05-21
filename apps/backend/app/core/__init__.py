@@ -1,4 +1,5 @@
 """Core module initialization."""
+from __future__ import annotations
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.security import create_access_token, decode_token, get_password_hash, verify_password

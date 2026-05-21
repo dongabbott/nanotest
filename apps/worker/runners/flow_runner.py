@@ -1,4 +1,5 @@
 """Flow runner for DAG-based test flow execution."""
+from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict

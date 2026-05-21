@@ -1,4 +1,5 @@
 """Device management API endpoints."""
+from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Optional, List
 from uuid import UUID
@@ -21,12 +22,48 @@ from app.schemas.schemas import (
 import asyncio
 import logging
 import json as _json
+import os
+import platform as _platform
 import redis as _sync_redis
+import shutil
 from app.core.config import settings as _settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Devices"])
+
+
+def _resolve_adb_path() -> Optional[str]:
+    """Find adb executable in PATH or common Android SDK locations."""
+    adb_exe = "adb.exe" if _platform.system() == "Windows" else "adb"
+    found = shutil.which(adb_exe)
+    if found:
+        return found
+    # Common Android SDK paths on Windows
+    candidates = []
+    if _platform.system() == "Windows":
+        candidates = [
+            r"D:\platform-tools\adb.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
+            os.path.expandvars(r"%PROGRAMFILES%\Android\android-sdk\platform-tools\adb.exe"),
+            os.path.expandvars(r"%USERPROFILE%\android-sdk\platform-tools\adb.exe"),
+            os.path.expandvars(r"%ANDROID_HOME%\platform-tools\adb.exe"),
+            os.path.expandvars(r"%ANDROID_SDK_ROOT%\platform-tools\adb.exe"),
+        ]
+    else:
+        candidates = [
+            os.path.expandvars("$ANDROID_HOME/platform-tools/adb"),
+            os.path.expandvars("$ANDROID_SDK_ROOT/platform-tools/adb"),
+            os.path.expanduser("~/Android/Sdk/platform-tools/adb"),
+            "/usr/lib/android-sdk/platform-tools/adb",
+            "/opt/android-sdk/platform-tools/adb",
+            "/opt/homebrew/share/android-commandlinetools/platform-tools/adb",
+            "/opt/homebrew/opt/android-platform-tools/bin/adb",
+        ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
 
 # Session keepalive interval (seconds). Appium resets its newCommandTimeout
 # each time a command is received, so pinging at this interval keeps sessions
@@ -49,6 +86,26 @@ class ScanLocalDevicesResponse(BaseModel):
     devices: List[dict]
     count: int
     message: str
+
+
+class ConnectWifiDeviceRequest(BaseModel):
+    """Request to connect an ADB WiFi device.
+    Android 11+ wireless debugging requires two steps:
+    1. adb pair <ip>:<pair_port>  (with pairing code)
+    2. adb connect <ip>:<connect_port>
+    """
+    host: str = Field(..., min_length=1, description="Device IP address")
+    port: int = Field(default=5555, ge=1, le=65535, description="ADB connect port (default 5555)")
+    pair_port: Optional[int] = Field(default=None, ge=1, le=65535, description="ADB pair port (for Android 11+ wireless debugging)")
+    pairing_code: Optional[str] = Field(default=None, min_length=1, max_length=16, description="Pairing code shown on device")
+
+
+class ConnectWifiDeviceResponse(BaseModel):
+    """Response for ADB WiFi connect."""
+    success: bool
+    message: str
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
 
 
 class InstallPackageRequest(BaseModel):
@@ -463,49 +520,61 @@ async def scan_local_devices(
     This endpoint attempts to discover devices connected to the server.
     """
     discovered_devices = []
-    
+
     # Try to scan Android devices via ADB
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["adb", "devices", "-l"],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode == 0:
-            lines = result.stdout.strip().split("\n")[1:]  # Skip header
-            for line in lines:
-                if not line.strip():
-                    continue
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                udid = parts[0]
-                adb_state = parts[1]
-                if adb_state not in {"device", "offline", "unauthorized"}:
-                    continue
-                status_value = "connected" if adb_state == "device" else "disconnected"
+    adb_path = _resolve_adb_path()
+    if not adb_path:
+        logger.warning("ADB executable not found in PATH or common SDK locations")
+    else:
+        try:
+            import subprocess
+            result = subprocess.run(
+                [adb_path, "devices", "-l"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if result.returncode == 0:
+                lines = result.stdout.strip().split("\n")[1:]  # Skip header
+                for line in lines:
+                    if not line.strip():
+                        continue
+                    parts = line.split()
+                    if len(parts) < 2:
+                        continue
+                    udid = parts[0]
+                    adb_state = parts[1]
+                    if adb_state not in {"device", "offline", "unauthorized"}:
+                        continue
+                    status_value = "connected" if adb_state == "device" else "disconnected"
 
-                connection = "wifi" if ":" in udid else "usb"
+                    connection = "wifi" if ":" in udid else "usb"
 
-                model = "Unknown"
-                for part in parts:
-                    if part.startswith("model:"):
-                        model = part.split(":", 1)[1]
+                    model = "Unknown"
+                    for part in parts:
+                        if part.startswith("model:"):
+                            model = part.split(":", 1)[1]
 
-                discovered_devices.append({
-                    "id": udid,
-                    "udid": udid,
-                    "name": model if model != "Unknown" else udid,
-                    "platform": "android",
-                    "version": "",
-                    "model": model,
-                    "status": status_value,
-                    "connection": connection,
-                })
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-        pass  # ADB not available or failed
+                    discovered_devices.append({
+                        "id": udid,
+                        "udid": udid,
+                        "name": model if model != "Unknown" else udid,
+                        "platform": "android",
+                        "version": "",
+                        "model": model,
+                        "status": status_value,
+                        "connection": connection,
+                    })
+            else:
+                logger.warning("adb devices -l returned non-zero exit code %d: %s", result.returncode, result.stderr)
+        except subprocess.TimeoutExpired:
+            logger.warning("adb devices -l timed out")
+        except FileNotFoundError:
+            logger.warning("ADB executable not found at: %s", adb_path)
+        except Exception as exc:
+            logger.warning("ADB scan failed: %s", exc)
     
     # Try to scan iOS devices (requires libimobiledevice)
     try:
@@ -560,6 +629,102 @@ async def scan_local_devices(
         count=len(discovered_devices),
         message=f"Found {len(discovered_devices)} device(s)" if discovered_devices else "No devices found. Ensure ADB/libimobiledevice is installed and devices are connected.",
     )
+
+
+@router.post("/devices/connect-wifi", response_model=ConnectWifiDeviceResponse)
+async def connect_wifi_device(
+    payload: ConnectWifiDeviceRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+):
+    """
+    Connect to an Android device over WiFi using ADB.
+    This is useful when the device is on the same network but not yet connected via adb connect.
+    """
+    import subprocess
+    adb_path = _resolve_adb_path()
+    if not adb_path:
+        return ConnectWifiDeviceResponse(
+            success=False,
+            message="ADB executable not found on server. Please install Android SDK platform-tools and ensure adb is in PATH.",
+        )
+
+    # Step 1: Pair (Android 11+ wireless debugging)
+    if payload.pair_port and payload.pairing_code:
+        pair_address = f"{payload.host}:{payload.pair_port}"
+        try:
+            result = subprocess.run(
+                [adb_path, "pair", pair_address],
+                input=payload.pairing_code + "\n",
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+            pair_stdout = (result.stdout or "").strip()
+            pair_stderr = (result.stderr or "").strip()
+            logger.info("adb pair %s stdout: %s", pair_address, pair_stdout)
+
+            if result.returncode != 0 or ("failed" in pair_stdout.lower()):
+                return ConnectWifiDeviceResponse(
+                    success=False,
+                    message=f"Pairing failed: {pair_stdout or pair_stderr or 'unknown error'}",
+                    stdout=pair_stdout or None,
+                    stderr=pair_stderr or None,
+                )
+        except subprocess.TimeoutExpired:
+            return ConnectWifiDeviceResponse(
+                success=False,
+                message=f"Pairing to {pair_address} timed out after 30s",
+            )
+        except Exception as exc:
+            logger.exception("ADB WiFi pair failed for %s", pair_address)
+            return ConnectWifiDeviceResponse(
+                success=False,
+                message=f"Pairing unexpected error: {str(exc)}",
+            )
+
+    # Step 2: Connect
+    connect_address = f"{payload.host}:{payload.port}"
+    try:
+        result = subprocess.run(
+            [adb_path, "connect", connect_address],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+
+        # ADB connect typically outputs success to stdout, e.g.:
+        # "connected to 192.168.2.58:46263" or "already connected to 192.168.2.58:46263"
+        if result.returncode == 0 and ("connected to" in stdout or "already connected" in stdout):
+            return ConnectWifiDeviceResponse(
+                success=True,
+                message=stdout or f"Connected to {connect_address}",
+                stdout=stdout or None,
+                stderr=stderr or None,
+            )
+        else:
+            return ConnectWifiDeviceResponse(
+                success=False,
+                message=stdout or f"Failed to connect to {connect_address}",
+                stdout=stdout or None,
+                stderr=stderr or None,
+            )
+    except subprocess.TimeoutExpired:
+        return ConnectWifiDeviceResponse(
+            success=False,
+            message=f"Connection to {connect_address} timed out after 30s",
+        )
+    except Exception as exc:
+        logger.exception("ADB WiFi connect failed for %s", connect_address)
+        return ConnectWifiDeviceResponse(
+            success=False,
+            message=f"Unexpected error: {str(exc)}",
+        )
 
 
 @router.post("/devices/install-package", response_model=InstallPackageResponse)
@@ -635,8 +800,11 @@ async def install_package_to_local_device(
         except Exception:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Local package missing and download failed")
 
+    adb_path = _resolve_adb_path()
     if payload.platform == "android":
-        cmd = ["adb", "-s", payload.udid, "install", "-r", str(local_path)]
+        if not adb_path:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ADB executable not found on server")
+        cmd = [adb_path, "-s", payload.udid, "install", "-r", str(local_path)]
     else:
         cmd = ["ideviceinstaller", "-u", payload.udid, "-i", str(local_path)]
 

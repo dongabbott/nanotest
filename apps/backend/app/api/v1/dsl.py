@@ -1,5 +1,6 @@
 """DSL helper endpoints."""
 
+from __future__ import annotations
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/dsl", tags=["DSL"])

@@ -1,3 +1,4 @@
+from __future__ import annotations
 # filepath: d:\project\nanotest\apps\backend\app\repositories\base.py
 from typing import Generic, TypeVar, Type, Optional, List, Any
 from uuid import UUID

@@ -1,3 +1,4 @@
+from __future__ import annotations
 # filepath: d:\project\nanotest\apps\backend\app\services\__init__.py
 """Service layer for business logic."""
 from app.services.project_service import ProjectService

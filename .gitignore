@@ -159,9 +159,13 @@ screenshots/
 # Alembic auto-generated
 migrations/versions/__pycache__/
 
+# Ignore all backend migrations (auto-generated)
+apps/backend/migrations/
+
 # Build artifacts
 *.tar.gz
 *.zip
 
 *.apk
 *.ipa
+docs/wiki/*

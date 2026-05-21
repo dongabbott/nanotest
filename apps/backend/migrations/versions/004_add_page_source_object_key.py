@@ -5,6 +5,7 @@ Revises: 003_add_remote_appium_servers
 Create Date: 2026-02-27
 
 """
+from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 

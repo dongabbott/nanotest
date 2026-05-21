@@ -1,5 +1,6 @@
 """Task status API endpoints (Celery AsyncResult polling)."""
 
+from __future__ import annotations
 from typing import Annotated, Any, Optional
 
 from celery.result import AsyncResult

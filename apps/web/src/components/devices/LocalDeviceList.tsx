@@ -3,7 +3,8 @@ import {
   Usb, 
   RefreshCw, 
   Loader2,
-  AlertCircle
+  AlertCircle,
+  WifiOff
 } from 'lucide-react';
 import type { LocalDevice } from './types';
 
@@ -11,12 +12,14 @@ interface LocalDeviceListProps {
   devices: LocalDevice[];
   isLoading: boolean;
   onRefresh: () => void;
+  onConnectWifi?: () => void;
 }
 
 export function LocalDeviceList({ 
   devices, 
   isLoading, 
-  onRefresh
+  onRefresh,
+  onConnectWifi,
 }: LocalDeviceListProps) {
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -51,6 +54,13 @@ export function LocalDeviceList({
           设备管理 ({devices.length})
         </h3>
         <div className="flex items-center gap-2">
+          <button
+            onClick={onConnectWifi}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg"
+          >
+            <WifiOff size={16} />
+            连接 WiFi 设备
+          </button>
           <button
             onClick={onRefresh}
             disabled={isLoading}

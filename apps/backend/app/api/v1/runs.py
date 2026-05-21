@@ -1,4 +1,5 @@
 """Test Runs API endpoints."""
+from __future__ import annotations
 import uuid as uuid_module
 from datetime import datetime
 from typing import Annotated, Optional

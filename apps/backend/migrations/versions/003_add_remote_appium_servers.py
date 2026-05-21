@@ -5,6 +5,7 @@ Revises: 002_add_app_packages_local_path
 Create Date: 2026-02-25
 
 """
+from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 

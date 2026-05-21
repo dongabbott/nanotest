@@ -1,3 +1,4 @@
+from __future__ import annotations
 # filepath: d:\project\nanotest\apps\backend\app\services\test_flow_service.py
 """Test flow service for business logic."""
 from typing import List, Optional

@@ -1,3 +1,4 @@
+from __future__ import annotations
 # filepath: d:\project\nanotest\apps\backend\app\services\auth_service.py
 """Authentication service for user login and token management."""
 from datetime import datetime, timedelta

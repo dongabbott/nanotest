@@ -1,4 +1,5 @@
 """Test execution Celery tasks with Appium Runner integration."""
+from __future__ import annotations
 import asyncio
 import json
 import logging

@@ -1,3 +1,4 @@
+from __future__ import annotations
 # filepath: d:\project\nanotest\apps\backend\app\services\project_service.py
 """Project service for business logic."""
 from typing import List, Optional

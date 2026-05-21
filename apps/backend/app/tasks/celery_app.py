@@ -1,4 +1,5 @@
 """Celery worker configuration and tasks."""
+from __future__ import annotations
 import platform
 
 from celery import Celery

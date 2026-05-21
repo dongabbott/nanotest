@@ -1,4 +1,5 @@
 """Alembic migration environment configuration."""
+from __future__ import annotations
 import asyncio
 from logging.config import fileConfig
 

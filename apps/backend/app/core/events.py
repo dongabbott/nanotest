@@ -1,4 +1,5 @@
 """Event publishing utilities for real-time updates."""
+from __future__ import annotations
 import json
 import logging
 from datetime import datetime

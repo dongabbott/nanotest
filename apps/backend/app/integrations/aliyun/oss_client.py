@@ -1,4 +1,5 @@
 """Aliyun OSS client integration for object storage using httpx."""
+from __future__ import annotations
 import base64
 import hashlib
 import hmac

@@ -1,4 +1,5 @@
 """Requirement management API endpoints."""
+from __future__ import annotations
 import hashlib
 import math
 from typing import Annotated, Any
