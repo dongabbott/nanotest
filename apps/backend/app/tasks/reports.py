@@ -11,7 +11,7 @@ from app.tasks.celery_app import celery_app
 @celery_app.task(bind=True, name="app.tasks.reports.generate_run_report")
 def generate_run_report(self, run_id: str, report_format: str = "json") -> dict[str, Any]:
     """Generate a comprehensive report for a test run."""
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import (
         TestRun, TestRunNode, TestStepResult, ScreenAnalysis, 
         RiskSignal, TestCase, TestFlow
@@ -22,7 +22,7 @@ def generate_run_report(self, run_id: str, report_format: str = "json") -> dict[
     import json
 
     async def _generate():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             # Get the test run with related data
             result = await db.execute(
                 select(TestRun)
@@ -182,13 +182,13 @@ def generate_project_summary(
     days: int = 7
 ) -> dict[str, Any]:
     """Generate a summary report for a project over a time period."""
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import Project, TestRun, TestFlow
     from sqlalchemy import select, func
     from sqlalchemy.orm import selectinload
 
     async def _generate():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             # Get the project
             result = await db.execute(
                 select(Project).where(Project.id == UUID(project_id))
@@ -298,12 +298,12 @@ def aggregate_comparison_report(
     target_run_ids: List[str],
 ) -> dict[str, Any]:
     """Generate an aggregated comparison report across multiple runs."""
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import TestRun, RunComparison
     from sqlalchemy import select
 
     async def _aggregate():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             # Get baseline run
             result = await db.execute(
                 select(TestRun).where(TestRun.id == UUID(baseline_run_id))

@@ -79,8 +79,9 @@ interface WaitAction extends BaseAction {
 interface AssertAction extends BaseAction {
   type: 'assert';
   selector?: Selector;
-  condition: 'exists' | 'not_exists' | 'visible' | 'text_equals' | 'text_contains' | 'enabled';
+  condition: 'exists' | 'not_exists' | 'visible' | 'text_equals' | 'text_contains' | 'text_matches' | 'attribute' | 'enabled';
   expected?: string;
+  attribute?: string;
 }
 
 interface ScreenshotAction extends BaseAction {
@@ -95,7 +96,23 @@ interface AiAnalyzeAction extends BaseAction {
   saveResult?: string;
 }
 
-type Action = TapAction | SwipeAction | TypeAction | ScrollAction | WaitAction | AssertAction | ScreenshotAction | AiAnalyzeAction;
+interface AdbInputAction extends BaseAction {
+  type: 'adb_input';
+  text: string;
+}
+
+interface ClipboardInputAction extends BaseAction {
+  type: 'clipboard_input';
+  text: string;
+}
+
+interface PressKeyAction extends BaseAction {
+  type: 'press_key';
+  text: string;
+  delay?: number;
+}
+
+type Action = TapAction | SwipeAction | TypeAction | ScrollAction | WaitAction | AssertAction | ScreenshotAction | AiAnalyzeAction | AdbInputAction | ClipboardInputAction | PressKeyAction;
 
 export interface TestCaseDsl {
   version?: string;
@@ -121,6 +138,9 @@ const ACTION_TYPES: Record<string, { label: string; icon: any; color: string; de
   assert: { label: '断言', icon: CheckCircle, color: 'red', description: '验证条件是否满足', shortcut: 'A' },
   screenshot: { label: '截图', icon: Camera, color: 'pink', description: '截取屏幕截图', shortcut: 'C' },
   ai_analyze: { label: 'AI分析', icon: Sparkles, color: 'cyan', description: '使用AI分析屏幕', shortcut: 'X' },
+  adb_input: { label: 'ADB输入', icon: Keyboard, color: 'orange', description: '通过ADB直接输入（绕过send_keys）' },
+  clipboard_input: { label: '剪贴板输入', icon: ClipboardPaste, color: 'orange', description: '通过剪贴板粘贴输入（支持中文）' },
+  press_key: { label: '按键输入', icon: Keyboard, color: 'orange', description: '模拟按键/逐位输入验证码' },
 };
 
 const SELECTOR_STRATEGIES = [
@@ -144,6 +164,8 @@ const ASSERT_CONDITIONS = [
   { value: 'visible', label: '元素可见' },
   { value: 'text_equals', label: '文本等于' },
   { value: 'text_contains', label: '文本包含' },
+  { value: 'text_matches', label: '正则匹配' },
+  { value: 'attribute', label: '属性检查' },
   { value: 'enabled', label: '元素启用' },
 ];
 
@@ -179,6 +201,12 @@ const createDefaultAction = (type: string): Action => {
       return { ...base, type: 'screenshot', fullPage: false };
     case 'ai_analyze':
       return { ...base, type: 'ai_analyze', prompt: '' };
+    case 'adb_input':
+      return { ...base, type: 'adb_input', text: '' };
+    case 'clipboard_input':
+      return { ...base, type: 'clipboard_input', text: '' };
+    case 'press_key':
+      return { ...base, type: 'press_key', text: '', delay: 100 };
     default:
       return { ...base, type: 'tap', selector: { strategy: 'id', value: '' } };
   }
@@ -597,16 +625,42 @@ function StepEditor({
                 ))}
               </div>
             </div>
-            {(action.condition === 'text_equals' || action.condition === 'text_contains') && (
+            {(action.condition === 'text_equals' || action.condition === 'text_contains' || action.condition === 'text_matches') && (
               <div>
-                <label className="block text-xs text-gray-500 mb-1">期望值</label>
+                <label className="block text-xs text-gray-500 mb-1">
+                  {action.condition === 'text_matches' ? '正则表达式' : '期望值'}
+                </label>
                 <input
                   type="text"
                   value={action.expected || ''}
                   onChange={(e) => onChange({ ...action, expected: e.target.value })}
                   className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  placeholder="期望的文本内容"
+                  placeholder={action.condition === 'text_matches' ? '^[0-9]{4}$' : '期望的文本内容'}
                 />
+              </div>
+            )}
+            {action.condition === 'attribute' && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">属性名称</label>
+                  <input
+                    type="text"
+                    value={action.attribute || ''}
+                    onChange={(e) => onChange({ ...action, attribute: e.target.value })}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="enabled, checked, text..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">期望属性值</label>
+                  <input
+                    type="text"
+                    value={action.expected || ''}
+                    onChange={(e) => onChange({ ...action, expected: e.target.value })}
+                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    placeholder="true"
+                  />
+                </div>
               </div>
             )}
             <SelectorEditor
@@ -664,6 +718,73 @@ function StepEditor({
                 placeholder="将分析结果保存到变量"
               />
             </div>
+          </div>
+        );
+
+      case 'adb_input':
+        return (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">ADB 输入文本 (ASCII only, Android)</label>
+              <input
+                type="text"
+                value={action.text}
+                onChange={(e) => onChange({ ...action, text: e.target.value })}
+                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="通过 adb shell input text 输入，绕过 send_keys"
+              />
+            </div>
+            <p className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+              适用于非标准输入框（验证码、自定义键盘）。仅支持 ASCII，中文请用剪贴板输入。
+            </p>
+          </div>
+        );
+
+      case 'clipboard_input':
+        return (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">剪贴板粘贴文本</label>
+              <textarea
+                value={action.text}
+                onChange={(e) => onChange({ ...action, text: e.target.value })}
+                rows={2}
+                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="通过剪贴板粘贴，支持中文/Unicode"
+              />
+            </div>
+            <p className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+              复制到设备剪贴板后触发粘贴，适用于非标准输入框 + 中文内容。
+            </p>
+          </div>
+        );
+
+      case 'press_key':
+        return (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">按键内容</label>
+              <input
+                type="text"
+                value={action.text}
+                onChange={(e) => onChange({ ...action, text: e.target.value })}
+                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="单个字符如 1, a 或键名如 enter, backspace, tab"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">按键间隔 (毫秒)</label>
+              <input
+                type="number"
+                value={action.delay ?? 100}
+                onChange={(e) => onChange({ ...action, delay: Number(e.target.value) })}
+                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="100"
+              />
+            </div>
+            <p className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+              逐位输入，适合验证码（每位一个 step）。支持字符和键名（enter/backspace/tab/home）。
+            </p>
           </div>
         );
 
@@ -766,6 +887,12 @@ function StepCard({
         return action.name ? `截图: ${action.name}` : '截取屏幕';
       case 'ai_analyze':
         return action.prompt ? `AI: ${action.prompt.substring(0, 20)}...` : 'AI分析';
+      case 'adb_input':
+        return action.text ? `ADB输入 "${action.text.substring(0, 20)}"` : 'ADB输入';
+      case 'clipboard_input':
+        return action.text ? `剪贴板粘贴 "${action.text.substring(0, 20)}"` : '剪贴板输入';
+      case 'press_key':
+        return action.text ? `按键 "${action.text}"` : '按键输入';
       default:
         return actionType?.label || '未知操作';
     }
@@ -780,6 +907,7 @@ function StepCard({
     red: { bg: 'bg-red-100', text: 'text-red-600', border: 'border-red-200' },
     pink: { bg: 'bg-pink-100', text: 'text-pink-600', border: 'border-pink-200' },
     cyan: { bg: 'bg-cyan-100', text: 'text-cyan-600', border: 'border-cyan-200' },
+    orange: { bg: 'bg-orange-100', text: 'text-orange-600', border: 'border-orange-200' },
   };
 
   const colors = colorClasses[actionType?.color || 'blue'];
@@ -922,6 +1050,7 @@ function QuickAddToolbar({ onAdd }: { onAdd: (type: string) => void }) {
           red: 'hover:bg-red-100 hover:text-red-700',
           pink: 'hover:bg-pink-100 hover:text-pink-700',
           cyan: 'hover:bg-cyan-100 hover:text-cyan-700',
+          orange: 'hover:bg-orange-100 hover:text-orange-700',
         };
         return (
           <button
@@ -983,6 +1112,7 @@ function AddStepModal({
               red: { bg: 'bg-red-100', hover: 'hover:bg-red-50 hover:border-red-300', text: 'text-red-600' },
               pink: { bg: 'bg-pink-100', hover: 'hover:bg-pink-50 hover:border-pink-300', text: 'text-pink-600' },
               cyan: { bg: 'bg-cyan-100', hover: 'hover:bg-cyan-50 hover:border-cyan-300', text: 'text-cyan-600' },
+              orange: { bg: 'bg-orange-100', hover: 'hover:bg-orange-50 hover:border-orange-300', text: 'text-orange-600' },
             };
             const colors = colorClasses[config.color];
             return (

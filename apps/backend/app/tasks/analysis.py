@@ -9,7 +9,7 @@ from app.tasks.celery_app import celery_app
 @celery_app.task(bind=True, name="app.tasks.analysis.analyze_test_run")
 def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, Any]:
     """Analyze screenshots from a test run using AI."""
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import ScreenAnalysis, TestRun, TestRunNode, TestStepResult
     from app.integrations.llm.client import get_llm_client
     from app.integrations.aliyun.oss_client import get_oss_client
@@ -17,7 +17,7 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
     import structlog
 
     async def _analyze():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             logger = structlog.get_logger()
             # Get the test run
             result = await db.execute(
@@ -205,14 +205,14 @@ def analyze_test_run(self, run_id: str, analysis_types: List[str]) -> dict[str, 
 @celery_app.task(bind=True, name="app.tasks.analysis.compare_test_runs")
 def compare_test_runs(self, comparison_id: str) -> dict[str, Any]:
     """Compare two test runs using AI."""
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import RunComparison, TestRun, TestStepResult, TestRunNode
     from app.integrations.llm.client import get_llm_client
     from app.integrations.aliyun.oss_client import get_oss_client
     from sqlalchemy import select
 
     async def _compare():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             # Get the comparison record
             result = await db.execute(
                 select(RunComparison).where(RunComparison.id == comparison_id)
@@ -292,12 +292,12 @@ def compare_test_runs(self, comparison_id: str) -> dict[str, Any]:
 @celery_app.task(bind=True, name="app.tasks.analysis.calculate_risk_signals")
 def calculate_risk_signals(self, run_id: str) -> dict[str, Any]:
     """Calculate risk signals for a test run."""
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import RiskSignal, ScreenAnalysis, TestRun, TestRunNode, TestStepResult
     from sqlalchemy import select
 
     async def _calculate():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             # Get all analyses for this run
             result = await db.execute(
                 select(ScreenAnalysis)

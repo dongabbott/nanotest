@@ -248,19 +248,27 @@ export function CreateSessionModal({ isOpen, onClose, devices }: CreateSessionMo
                 <input
                   type="checkbox"
                   checked={noReset}
-                  onChange={(e) => setNoReset(e.target.checked)}
+                  onChange={(e) => {
+                    setNoReset(e.target.checked);
+                    // noReset 和 fullReset 互斥
+                    if (e.target.checked) setFullReset(false);
+                  }}
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm text-gray-700">noReset - 保留应用数据</span>
+                <span className="text-sm text-gray-700">noReset - 保留应用数据（不重置）</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={fullReset}
-                  onChange={(e) => setFullReset(e.target.checked)}
+                  onChange={(e) => {
+                    setFullReset(e.target.checked);
+                    // noReset 和 fullReset 互斥
+                    if (e.target.checked) setNoReset(false);
+                  }}
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm text-gray-700">fullReset - 完全重置应用</span>
+                <span className="text-sm text-gray-700">fullReset - 完全重置应用（卸载重装）</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input

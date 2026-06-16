@@ -5,7 +5,7 @@ from typing import Annotated, Optional, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -208,6 +208,14 @@ class CreateSessionFromPackageRequest(BaseModel):
     auto_launch: bool = True  # 是否自动启动应用
     extra_capabilities: Optional[dict] = None  # 额外的 capabilities
 
+    @model_validator(mode="after")
+    def _check_reset_flags(self):
+        """noReset 和 fullReset 互斥，不能同时为 true。"""
+        if self.no_reset and self.full_reset:
+            # fullReset 优先级更高，自动关闭 noReset
+            self.no_reset = False
+        return self
+
 
 class SessionInfo(BaseModel):
     """Session information response."""
@@ -248,8 +256,15 @@ class SessionActionResponse(BaseModel):
 # Redis-backed Appium session store (replaces in-memory dict)
 # ---------------------------------------------------------------------------
 
+_redis_pool: Optional[_sync_redis.Redis] = None
+
+
 def _redis_client() -> _sync_redis.Redis:
-    return _sync_redis.from_url(_settings.redis_url, decode_responses=True)
+    """Return a reused sync Redis connection (lazy-init)."""
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = _sync_redis.from_url(_settings.redis_url, decode_responses=True)
+    return _redis_pool
 
 
 def _session_key(tenant_id: str, session_id: str) -> str:
@@ -450,11 +465,11 @@ async def _keepalive_loop() -> None:
         try:
             await asyncio.sleep(_KEEPALIVE_INTERVAL_SEC)
             r = _redis_client()
-            # Scan all session keys across all tenants
-            all_keys = r.keys("appium:session:*")
+            # Scan all session keys across all tenants (sync Redis in thread)
+            all_keys = await asyncio.to_thread(r.keys, "appium:session:*")
 
             for key in all_keys:
-                raw = r.get(key)
+                raw = await asyncio.to_thread(r.get, key)
                 if not raw:
                     continue
                 try:
@@ -478,7 +493,9 @@ async def _keepalive_loop() -> None:
                     parts = key.split(":")
                     if len(parts) >= 4:
                         tenant_id = parts[2]
-                        _appium_sessions_store.update_field(tenant_id, sid, "status", "expired")
+                        await asyncio.to_thread(
+                            _appium_sessions_store.update_field, tenant_id, sid, "status", "expired"
+                        )
                     logger.info("Keepalive: session %s is no longer alive, marked expired", sid)
         except asyncio.CancelledError:
             logger.info("Session keepalive task cancelled")
@@ -528,7 +545,8 @@ async def scan_local_devices(
     else:
         try:
             import subprocess
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 [adb_path, "devices", "-l"],
                 capture_output=True,
                 text=True,
@@ -579,7 +597,8 @@ async def scan_local_devices(
     # Try to scan iOS devices (requires libimobiledevice)
     try:
         import subprocess
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["idevice_id", "-l"],
             capture_output=True,
             text=True,
@@ -652,7 +671,8 @@ async def connect_wifi_device(
     if payload.pair_port and payload.pairing_code:
         pair_address = f"{payload.host}:{payload.pair_port}"
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 [adb_path, "pair", pair_address],
                 input=payload.pairing_code + "\n",
                 capture_output=True,
@@ -687,7 +707,8 @@ async def connect_wifi_device(
     # Step 2: Connect
     connect_address = f"{payload.host}:{payload.port}"
     try:
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             [adb_path, "connect", connect_address],
             capture_output=True,
             text=True,
@@ -793,8 +814,8 @@ async def install_package_to_local_device(
     local_path = Path(package.local_path) if package.local_path else build_local_path()
     if not local_path.exists():
         try:
-            data = get_oss_client().download_bytes(package.object_key)
-            write_local_copy(local_path, data)
+            data = await asyncio.to_thread(get_oss_client().download_bytes, package.object_key)
+            await asyncio.to_thread(write_local_copy, local_path, data)
             package.local_path = str(local_path)
             await db.commit()
         except Exception:
@@ -809,7 +830,9 @@ async def install_package_to_local_device(
         cmd = ["ideviceinstaller", "-u", payload.udid, "-i", str(local_path)]
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        proc = await asyncio.to_thread(
+            subprocess.run, cmd, capture_output=True, text=True, timeout=300
+        )
     except FileNotFoundError:
         tool = "adb" if payload.platform == "android" else "ideviceinstaller"
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{tool} not installed on server")

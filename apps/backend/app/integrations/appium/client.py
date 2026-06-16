@@ -174,6 +174,8 @@ class AppiumClient:
         actions = self._new_finger_actions()
         if actions:
             actions.pointer_action.move_to_location(x, y)
+            # move_to_location sets the pointer position; pointer_down/up
+            # in Selenium 4.15 do NOT accept x/y kwargs.
             actions.pointer_action.pointer_down()
             actions.pointer_action.pause(0.05)
             actions.pointer_action.pointer_up()
@@ -191,16 +193,25 @@ class AppiumClient:
         """Tap on an element (compatibility method used by runners)."""
         element = self.find_element(locator_type, locator_value)
         rect = element.rect
-        x = int(rect["x"] + rect["width"] / 2)
-        y = int(rect["y"] + rect["height"] / 2)
+        # Guard against None values in rect (some drivers may return them)
+        rx = rect.get("x") or 0
+        ry = rect.get("y") or 0
+        rw = rect.get("width") or 0
+        rh = rect.get("height") or 0
+        x = int(rx + rw / 2)
+        y = int(ry + rh / 2)
         self.tap_xy(x, y)
 
     def double_tap(self, locator_type: str, locator_value: str) -> None:
         """Double-tap on an element."""
         element = self.find_element(locator_type, locator_value)
         rect = element.rect
-        x = int(rect["x"] + rect["width"] / 2)
-        y = int(rect["y"] + rect["height"] / 2)
+        rx = rect.get("x") or 0
+        ry = rect.get("y") or 0
+        rw = rect.get("width") or 0
+        rh = rect.get("height") or 0
+        x = int(rx + rw / 2)
+        y = int(ry + rh / 2)
 
         actions = self._new_finger_actions()
         if not actions:
@@ -246,7 +257,7 @@ class AppiumClient:
         """
         actions = self._new_finger_actions()
         if actions:
-            dur_sec = max(duration, 50) / 1000.0
+            dur_sec = max(int(duration or 500), 50) / 1000.0
             actions.pointer_action.move_to_location(start_x, start_y)
             actions.pointer_action.pointer_down()
             # A brief initial pause so the OS registers the touch-down event
@@ -324,7 +335,7 @@ class AppiumClient:
         """
         actions = self._new_finger_actions()
         if actions:
-            dur_sec = max(duration, 200) / 1000.0
+            dur_sec = max(int(duration or 1000), 200) / 1000.0
             actions.pointer_action.move_to_location(start_x, start_y)
             actions.pointer_action.pointer_down()
             # hold long enough so the OS registers this as a long-press / drag-start
@@ -349,14 +360,19 @@ class AppiumClient:
         """Long press on an element."""
         element = self.find_element(locator_type, locator_value)
         rect = element.rect
-        x = int(rect["x"] + rect["width"] / 2)
-        y = int(rect["y"] + rect["height"] / 2)
+        rx = rect.get("x") or 0
+        ry = rect.get("y") or 0
+        rw = rect.get("width") or 0
+        rh = rect.get("height") or 0
+        x = int(rx + rw / 2)
+        y = int(ry + rh / 2)
 
         actions = self._new_finger_actions()
         if actions:
+            dur_sec = max(int(duration or 1000), 200) / 1000.0
             actions.pointer_action.move_to_location(x, y)
             actions.pointer_action.pointer_down()
-            actions.pointer_action.pause(max(duration, 200) / 1000.0)
+            actions.pointer_action.pause(dur_sec)
             actions.pointer_action.pointer_up()
             actions.perform()
             return
@@ -373,9 +389,15 @@ class AppiumClient:
         self.driver.back()
 
     def home(self) -> None:
-        """Press the home button (Android only)."""
+        """Press the home button."""
         if self.platform == "android":
             self.driver.press_keycode(3)  # KEYCODE_HOME
+        else:
+            # iOS: use mobile: pressButton via execute_script
+            try:
+                self.driver.execute_script("mobile: pressButton", {"name": "home"})
+            except Exception:
+                pass  # Not all iOS setups support it
 
     def hide_keyboard(self) -> None:
         """Hide the on-screen keyboard if present."""
@@ -384,6 +406,109 @@ class AppiumClient:
         except Exception:
             # Not all drivers/platforms support it consistently
             pass
+
+    # ==========================================================================
+    # Keyboard Input (for non-standard input fields)
+    # ==========================================================================
+
+    def adb_input_text(self, text: str) -> None:
+        """Input text via ADB shell command (Android only).
+
+        Use this for non-standard input fields (e.g. verification code boxes,
+        custom keyboard views) that don't respond to ``send_keys``.
+
+        Limitations:
+          - Android only (requires ``adb`` in PATH).
+          - ASCII text only; Chinese/Unicode characters are **not** supported.
+          - Spaces must be encoded as ``%s``.
+        """
+        import subprocess
+
+        if self.platform != "android":
+            raise RuntimeError("adb_input_text is only supported on Android")
+
+        escaped = text.replace(" ", "%s").replace("&", r"\&").replace("<", r"\<")
+        cmd = ["adb", "-s", self.device_udid, "shell", "input", "text", escaped]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            raise RuntimeError(f"ADB input text failed: {result.stderr.strip()}")
+
+    def clipboard_input_text(self, text: str) -> None:
+        """Input text via clipboard paste (Android & iOS).
+
+        Copies text to the device clipboard then triggers Ctrl+V paste.
+        Works with **Chinese / Unicode** text and non-standard input fields
+        where ``send_keys`` fails.
+
+        Workflow:
+          1. Set device clipboard via Appium ``set_clipboard_text``.
+          2. Fire ``KEYCODE_PASTE`` (Android) or ``mobile: paste`` (iOS).
+        """
+        self.driver.set_clipboard_text(text)
+
+        if self.platform == "android":
+            # KEYCODE_PASTE = 279
+            try:
+                self.driver.press_keycode(279)
+            except Exception:
+                # Fallback: META_CTRL_LEFT + V via W3C actions
+                import subprocess
+                subprocess.run(
+                    ["adb", "-s", self.device_udid, "shell",
+                     "input", "keyevent", "--longpress",
+                     "(279)"],
+                    capture_output=True, timeout=10,
+                )
+        else:
+            try:
+                self.driver.execute_script("mobile: paste", {"text": text})
+            except Exception:
+                pass  # Not all iOS setups support mobile: paste
+
+    def press_key(self, key: str) -> None:
+        """Press a single key by name or keycode.
+
+        Especially useful for **digit-by-digit** verification code input
+        on non-standard fields (e.g. 4 separate boxes).
+
+        Supported keys:
+          - ``"0"`` … ``"9"``  → Android KEYCODE_0..9 (7–16)
+          - ``"enter"``        → KEYCODE_ENTER (66)
+          - ``"delete"`` / ``"backspace"`` → KEYCODE_DEL (67)
+          - ``"tab"``          → KEYCODE_TAB (61)
+          - ``"space"``        → KEYCODE_SPACE (62)
+          - ``"escape"``       → KEYCODE_ESCAPE (111)
+          - Integer string (e.g. ``"66"``) → raw Android keycode
+
+        For iOS, uses ``mobile: pressButton`` with the key name.
+        """
+        KEY_MAP = {
+            "0": 7, "1": 8, "2": 9, "3": 10, "4": 11,
+            "5": 12, "6": 13, "7": 14, "8": 15, "9": 16,
+            "enter": 66, "return": 66,
+            "delete": 67, "backspace": 67, "del": 67,
+            "tab": 61,
+            "space": 62,
+            "escape": 111, "esc": 111,
+        }
+
+        if self.platform == "android":
+            key_lower = key.lower().strip()
+            keycode = KEY_MAP.get(key_lower)
+            if keycode is None:
+                try:
+                    keycode = int(key)
+                except ValueError:
+                    raise ValueError(
+                        f"Unknown key '{key}'. Use 0-9, enter, delete, tab, space, "
+                        f"escape, or a raw Android keycode number."
+                    )
+            self.driver.press_keycode(keycode)
+        else:
+            try:
+                self.driver.execute_script("mobile: pressButton", {"name": key.lower()})
+            except Exception:
+                raise RuntimeError(f"iOS press_key not supported for: {key}")
 
     # ==========================================================================
     # App Management
@@ -446,7 +571,7 @@ class AppiumClient:
         from selenium.webdriver.support import expected_conditions as EC
 
         by = self._get_by(locator_type)
-        wait = WebDriverWait(self.driver, timeout)
+        wait = WebDriverWait(self.driver, int(timeout or 10))
         return wait.until(EC.presence_of_element_located((by, locator_value)))
 
     def wait_for_visible(
@@ -460,7 +585,7 @@ class AppiumClient:
         from selenium.webdriver.support import expected_conditions as EC
 
         by = self._get_by(locator_type)
-        wait = WebDriverWait(self.driver, timeout)
+        wait = WebDriverWait(self.driver, int(timeout or 10))
         return wait.until(EC.visibility_of_element_located((by, locator_value)))
 
     def wait_for_clickable(
@@ -474,7 +599,7 @@ class AppiumClient:
         from selenium.webdriver.support import expected_conditions as EC
 
         by = self._get_by(locator_type)
-        wait = WebDriverWait(self.driver, timeout)
+        wait = WebDriverWait(self.driver, int(timeout or 10))
         return wait.until(EC.element_to_be_clickable((by, locator_value)))
 
     def wait_invisible(
@@ -488,7 +613,7 @@ class AppiumClient:
         from selenium.webdriver.support import expected_conditions as EC
 
         by = self._get_by(locator_type)
-        wait = WebDriverWait(self.driver, timeout)
+        wait = WebDriverWait(self.driver, int(timeout or 10))
         return bool(wait.until(EC.invisibility_of_element_located((by, locator_value))))
 
     def element_exists(self, locator_type: str, locator_value: str) -> bool:

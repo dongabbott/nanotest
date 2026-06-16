@@ -139,8 +139,8 @@ def _build_step_metadata(step_data: dict) -> dict:
     # Swipe: runner expects metadata.coords
     if step_data.get("type") == "swipe" or step_data.get("action") == "swipe":
         direction = step_data.get("direction", "up")
-        distance = step_data.get("distance", 0.5)
-        duration = step_data.get("duration", 500)
+        distance = step_data.get("distance") or 0.5
+        duration = step_data.get("duration") or 500
         # Convert direction + distance into absolute coords
         # Using a 1080x1920 reference; actual coords are relative
         cx, cy = 540, 960
@@ -159,12 +159,12 @@ def _build_step_metadata(step_data: dict) -> dict:
     # Wait: runner expects metadata.duration (ms)
     if step_data.get("type") in ("wait",) or step_data.get("action") in ("wait",):
         if "duration" not in metadata:
-            metadata["duration"] = step_data.get("duration", 1000)
+            metadata["duration"] = step_data.get("duration") or 1000
 
     # Long press: runner expects metadata.duration
     if step_data.get("type") == "long_press" or step_data.get("action") == "long_press":
         if "duration" not in metadata:
-            metadata["duration"] = step_data.get("duration", 1000)
+            metadata["duration"] = step_data.get("duration") or 1000
 
     # Launch/close app: runner expects metadata.app_id
     if step_data.get("type") in ("launch_app", "close_app"):
@@ -190,7 +190,7 @@ def execute_test_run(self, run_id: str, device_config: Optional[dict] = None) ->
     Returns:
         Execution result summary
     """
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import (
         TestRun, TestRunNode, TestStepResult, FlowNodeBinding, 
         TestCase, Device, TestFlow
@@ -198,8 +198,10 @@ def execute_test_run(self, run_id: str, device_config: Optional[dict] = None) ->
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
+    logger.info(">>> execute_test_run STARTED  run_id=%s", run_id)
+
     async def _execute():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             # Get the test run with related data
             result = await db.execute(
                 select(TestRun)
@@ -302,7 +304,13 @@ def execute_test_run(self, run_id: str, device_config: Optional[dict] = None) ->
 
                 return {"success": False, "error": str(e)}
 
-    return asyncio.run(_execute())
+    try:
+        result = asyncio.run(_execute())
+        logger.info("<<< execute_test_run FINISHED run_id=%s  success=%s", run_id, result.get("success"))
+        return result
+    except Exception as exc:
+        logger.exception("!!! execute_test_run CRASHED run_id=%s", run_id)
+        return {"success": False, "error": str(exc)}
 
 
 def _build_execution_context(
@@ -736,7 +744,7 @@ def execute_single_node(
     """
     Execute a single test node (for parallel execution).
     """
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import TestCase, FlowNodeBinding
     from sqlalchemy import select
 
@@ -745,7 +753,7 @@ def execute_single_node(
         return {"success": False, "error": "No device session bound"}
 
     async def _execute():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             result = await db.execute(select(TestCase).where(TestCase.id == test_case_id))
             test_case = result.scalar_one_or_none()
             if not test_case:
@@ -782,13 +790,13 @@ def retry_failed_nodes(self, run_id: str) -> dict[str, Any]:
     """
     Retry all failed nodes in a test run.
     """
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import TestRun, TestRunNode, FlowNodeBinding
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     async def _retry():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             result = await db.execute(
                 select(TestRunNode).where(
                     TestRunNode.test_run_id == run_id,
@@ -863,12 +871,12 @@ def cancel_test_run(self, run_id: str) -> dict[str, Any]:
     """
     Cancel a running test run.
     """
-    from app.core.database import AsyncSessionLocal
+    from app.core.database import celery_session
     from app.domain.models import TestRun, TestRunNode
     from sqlalchemy import select, update
 
     async def _cancel():
-        async with AsyncSessionLocal() as db:
+        async with celery_session() as db:
             # Get run
             result = await db.execute(
                 select(TestRun).where(TestRun.id == run_id)

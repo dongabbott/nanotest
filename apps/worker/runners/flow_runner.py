@@ -525,16 +525,30 @@ def _normalize_action(step_data: dict) -> str:
             "visible": "assert_visible",
             "text_equals": "assert_text",
             "text_contains": "assert_contains",
+            "text_matches": "assert_text_matches",
+            "attribute": "assert_attribute",
             "enabled": "assert_exists",
         }
         return mapping.get(condition, "assert_exists")
 
     if action == "scroll":
-        direction = step_data.get("direction", "down")
-        return "scroll_up" if direction == "up" else "scroll_down"
+        direction = (step_data.get("direction") or "down").strip().lower()
+        scroll_map = {
+            "up": "scroll_up",
+            "down": "scroll_down",
+            "left": "scroll_left",
+            "right": "scroll_right",
+        }
+        return scroll_map.get(direction, "scroll_down")
 
     if action == "wait" and step_data.get("condition"):
         return "wait_for_element"
+
+    if action == "input_text":
+        return "input"
+
+    if action == "press_keycode":
+        return "press_key"
 
     return action
 
@@ -545,8 +559,8 @@ def _build_step_metadata(step_data: dict) -> dict:
 
     if step_data.get("type") == "swipe" or step_data.get("action") == "swipe":
         direction = step_data.get("direction", "up")
-        distance = step_data.get("distance", 0.5)
-        duration = step_data.get("duration", 500)
+        distance = step_data.get("distance") or 0.5
+        duration = step_data.get("duration") or 500
         cx, cy = 540, 960
         half_h = int(960 * distance)
         half_w = int(540 * distance)
@@ -562,15 +576,28 @@ def _build_step_metadata(step_data: dict) -> dict:
 
     if step_data.get("type") in ("wait",) or step_data.get("action") in ("wait",):
         if "duration" not in metadata:
-            metadata["duration"] = step_data.get("duration", 1000)
+            metadata["duration"] = step_data.get("duration") or 1000
 
     if step_data.get("type") == "long_press" or step_data.get("action") == "long_press":
         if "duration" not in metadata:
-            metadata["duration"] = step_data.get("duration", 1000)
+            metadata["duration"] = step_data.get("duration") or 1000
 
     if step_data.get("type") in ("launch_app", "close_app"):
         if "app_id" not in metadata:
             metadata["app_id"] = step_data.get("app_id")
+
+    # press_key batch mode: pass keys string and delay
+    if step_data.get("type") in ("press_key", "press_keycode") or \
+       step_data.get("action") in ("press_key", "press_keycode"):
+        if "keys" not in metadata and step_data.get("keys"):
+            metadata["keys"] = step_data["keys"]
+        if "delay" not in metadata and step_data.get("delay"):
+            metadata["delay"] = step_data["delay"]
+
+    # assert_attribute: pass attribute name
+    if step_data.get("type") == "assert" and step_data.get("condition") == "attribute":
+        if "attribute" not in metadata and step_data.get("attribute"):
+            metadata["attribute"] = step_data["attribute"]
 
     return metadata
 
@@ -582,6 +609,8 @@ def _parse_dsl_steps(dsl_content: dict) -> list[TestStep]:
         locator_type, locator_value = _parse_locator(step_data)
         input_value = step_data.get("value") or step_data.get("text")
         expected_value = step_data.get("expected")
+        # Use `or` fallback to guard against explicit null values in JSON
+        timeout = step_data.get("timeout") or 10
         steps.append(TestStep(
             index=i,
             action=_normalize_action(step_data),
@@ -589,7 +618,7 @@ def _parse_dsl_steps(dsl_content: dict) -> list[TestStep]:
             locator_value=locator_value,
             input_value=input_value,
             expected_value=expected_value,
-            timeout=step_data.get("timeout", 10),
+            timeout=int(timeout),
             optional=step_data.get("optional") or step_data.get("continueOnError", False),
             metadata=_build_step_metadata(step_data),
         ))

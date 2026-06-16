@@ -262,26 +262,13 @@ Risk Signals:
         
         # Use text generation (no image)
         try:
-            from openai import AsyncOpenAI
-            from app.core.config import settings
-            
-            client_kwargs = {}
-            if settings.llm_base_url:
-                client_kwargs["base_url"] = settings.llm_base_url
-
-            client = AsyncOpenAI(api_key=settings.llm_api_key, **client_kwargs)
-            response = await client.chat.completions.create(
-                model=settings.llm_chat_model,
-                messages=[
-                    {"role": "system", "content": template["system"]},
-                    {"role": "user", "content": summary_text}
-                ],
-                max_tokens=1500,
-                response_format={"type": "json_object"}
+            system_prompt = template["system"]
+            content = await self.llm_client.chat_text(
+                user_message=summary_text,
+                system_prompt=system_prompt,
             )
             
             import json
-            content = response.choices[0].message.content
             try:
                 result_json = json.loads(content)
             except json.JSONDecodeError:
@@ -294,7 +281,7 @@ Risk Signals:
                 result=result_json,
                 confidence=0.9,
                 latency_ms=latency_ms,
-                model_name=settings.llm_chat_model,
+                model_name=self.llm_client.model,
                 prompt_version=template["version"]
             )
         except Exception as e:

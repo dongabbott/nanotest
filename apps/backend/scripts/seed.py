@@ -25,7 +25,7 @@ async def seed_database():
         
         if not tenant:
             tenant = Tenant(
-                id=uuid.uuid4(),
+                id=str(uuid.uuid4()),
                 name="Default Tenant",
                 status="active"
             )
@@ -43,7 +43,7 @@ async def seed_database():
         
         # Create admin user
         admin_user = User(
-            id=uuid.uuid4(),
+            id=str(uuid.uuid4()),
             tenant_id=tenant.id,
             email="admin@nanotest.com",
             name="Admin User",
@@ -55,7 +55,7 @@ async def seed_database():
         
         # Create test user
         test_user = User(
-            id=uuid.uuid4(),
+            id=str(uuid.uuid4()),
             tenant_id=tenant.id,
             email="test@example.com",
             name="Test User",

@@ -1,5 +1,6 @@
 """App package management service."""
 from __future__ import annotations
+import asyncio
 import os
 import re
 import uuid
@@ -97,16 +98,16 @@ class PackageService:
         if not project or project.tenant_id != tenant_id:
             raise ValueError("Project not found or access denied")
         
-        # Parse the package
+        # Parse the package (CPU-intensive, run in thread to not block event loop)
         logger.info(f"Parsing package: {filename}")
         try:
-            package_info = AppPackageParser.parse(file_data, filename)
+            package_info = await asyncio.to_thread(AppPackageParser.parse, file_data, filename)
         except Exception as e:
             logger.error(f"Failed to parse package: {e}")
             raise ValueError(f"Failed to parse package: {str(e)}")
         
-        # Calculate file hash
-        file_hash = AppPackageParser.calculate_hash(file_data)
+        # Calculate file hash (CPU-intensive)
+        file_hash = await asyncio.to_thread(AppPackageParser.calculate_hash, file_data)
         
         # Check for duplicate
         existing = await self._find_by_hash(tenant_id, file_hash)
@@ -120,7 +121,7 @@ class PackageService:
 
         local_path = self._build_local_package_path(tenant_id, project_id, package_id, safe_filename)
         try:
-            self._write_local_copy(local_path, file_data)
+            await asyncio.to_thread(self._write_local_copy, local_path, file_data)
         except Exception as e:
             raise ValueError(f"Failed to save local package copy: {str(e)}")
         
@@ -128,7 +129,7 @@ class PackageService:
         logger.info(f"Uploading package to Aliyun OSS: {simple_key}")
         content_type = "application/vnd.android.package-archive" if package_info.platform == "android" else "application/octet-stream"
         try:
-            object_key = self.oss.upload_bytes(simple_key, file_data, content_type)
+            object_key = await asyncio.to_thread(self.oss.upload_bytes, simple_key, file_data, content_type)
         except Exception as e:
             try:
                 if local_path.exists():
@@ -143,7 +144,7 @@ class PackageService:
             icon_filename = Path(safe_filename).stem
             simple_icon_key = f"{self.PATH_ICONS}/{icon_filename}_icon.png"
             try:
-                icon_object_key = self.oss.upload_bytes(simple_icon_key, package_info.icon_data, "image/png")
+                icon_object_key = await asyncio.to_thread(self.oss.upload_bytes, simple_icon_key, package_info.icon_data, "image/png")
             except Exception as e:
                 logger.warning(f"Failed to upload icon: {e}")
         

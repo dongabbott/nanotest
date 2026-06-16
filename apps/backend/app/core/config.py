@@ -63,12 +63,14 @@ class Settings(BaseSettings):
     qwen_api_key: Optional[str] = None
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_chat_model: str = "qwen-plus"
+    qwen_vl_chat_model: str = "qwen-vl-max"  # vision model for image analysis
     qwen_embedding_model: str = "text-embedding-v3"
 
     # Effective provider settings resolved from llm_provider
     llm_api_key: Optional[str] = None
     llm_base_url: Optional[str] = None
     llm_chat_model: str = ""
+    llm_vl_chat_model: str = ""  # vision-language model for image analysis
     llm_embedding_model: str = ""
     llm_embedding_dimensions: int = 1536
     ai_analysis_timeout: int = 120
@@ -88,12 +90,14 @@ class Settings(BaseSettings):
                 "api_key": self.doubao_api_key,
                 "base_url": self.doubao_base_url,
                 "chat_model": self.doubao_chat_model,
+                "vl_chat_model": self.doubao_chat_model,  # doubao uses same model for vision
                 "embedding_model": self.doubao_embedding_model,
             },
             "qwen": {
                 "api_key": self.qwen_api_key,
                 "base_url": self.qwen_base_url,
                 "chat_model": self.qwen_chat_model,
+                "vl_chat_model": self.qwen_vl_chat_model,
                 "embedding_model": self.qwen_embedding_model,
             },
         }
@@ -103,6 +107,7 @@ class Settings(BaseSettings):
         self.llm_api_key = resolved["api_key"]
         self.llm_base_url = resolved["base_url"]
         self.llm_chat_model = resolved["chat_model"]
+        self.llm_vl_chat_model = resolved["vl_chat_model"]
         self.llm_embedding_model = resolved["embedding_model"]
 
 

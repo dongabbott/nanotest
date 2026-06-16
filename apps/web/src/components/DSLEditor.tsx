@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { 
+import {
   Plus, 
   Trash2, 
   GripVertical, 
@@ -19,6 +19,7 @@ import {
   Settings,
   Search,
   Wand2,
+  Keyboard,
 } from 'lucide-react';
 import { dslApi } from '../services/api';
 
@@ -29,6 +30,7 @@ interface DSLStep {
   target?: string;
   value?: string;
   expected?: string;
+  attribute?: string;
   timeout?: number;
   retries?: number;
   screenshot?: boolean;
@@ -51,29 +53,41 @@ interface DSLTestCase {
 
 // 可用的动作类型
 const ACTION_TYPES = [
+  // -- 交互操作 --
   { value: 'tap', label: '点击', icon: MousePointer, category: 'interaction' },
   { value: 'long_press', label: '长按', icon: MousePointer, category: 'interaction' },
   { value: 'double_tap', label: '双击', icon: MousePointer, category: 'interaction' },
   { value: 'swipe', label: '滑动', icon: Smartphone, category: 'interaction' },
   { value: 'scroll', label: '滚动', icon: Smartphone, category: 'interaction' },
+  { value: 'drag', label: '拖拽', icon: MousePointer, category: 'interaction' },
   { value: 'tap_xy', label: '坐标点击', icon: MousePointer, category: 'interaction' },
+  // -- 输入操作 --
   { value: 'input', label: '输入文本', icon: Type, category: 'input' },
   { value: 'clear', label: '清空输入', icon: Type, category: 'input' },
+  { value: 'adb_input', label: 'ADB输入', icon: Keyboard, category: 'input' },
+  { value: 'clipboard_input', label: '剪贴板输入', icon: Type, category: 'input' },
+  { value: 'press_key', label: '按键输入', icon: Keyboard, category: 'input' },
   { value: 'hide_keyboard', label: '隐藏键盘', icon: Smartphone, category: 'input' },
+  // -- 断言验证 --
   { value: 'assert_visible', label: '断言可见', icon: Eye, category: 'assertion' },
   { value: 'assert_text', label: '断言文本', icon: Type, category: 'assertion' },
   { value: 'assert_contains', label: '断言包含', icon: Type, category: 'assertion' },
+  { value: 'assert_text_matches', label: '断言正则', icon: Type, category: 'assertion' },
+  { value: 'assert_attribute', label: '断言属性', icon: Check, category: 'assertion' },
   { value: 'assert_exists', label: '断言存在', icon: Check, category: 'assertion' },
   { value: 'assert_not_exists', label: '断言不存在', icon: Check, category: 'assertion' },
+  // -- 流程控制 --
   { value: 'wait', label: '等待', icon: Clock, category: 'control' },
   { value: 'wait_for', label: '等待元素', icon: Clock, category: 'control' },
   { value: 'wait_invisible', label: '等待消失', icon: Clock, category: 'control' },
-  { value: 'screenshot', label: '截图', icon: Image, category: 'utility' },
+  // -- 导航操作 --
   { value: 'back', label: '返回', icon: RotateCcw, category: 'navigation' },
   { value: 'home', label: '主页', icon: Smartphone, category: 'navigation' },
   { value: 'launch_app', label: '启动应用', icon: Smartphone, category: 'navigation' },
   { value: 'close_app', label: '关闭应用', icon: Smartphone, category: 'navigation' },
   { value: 'reset_app', label: '重启应用', icon: Smartphone, category: 'navigation' },
+  // -- 工具操作 --
+  { value: 'screenshot', label: '截图', icon: Image, category: 'utility' },
 ];
 
 const ACTION_CATEGORIES = {
@@ -262,9 +276,9 @@ function StepEditor({
   const ActionIcon = actionInfo?.icon || Settings;
   const categoryInfo = ACTION_CATEGORIES[actionInfo?.category as keyof typeof ACTION_CATEGORIES];
 
-  const needsTarget = !['wait', 'screenshot', 'back', 'home', 'hide_keyboard', 'tap_xy', 'launch_app', 'close_app', 'reset_app'].includes(step.action);
-  const needsValue = ['input', 'swipe', 'scroll', 'wait', 'tap_xy', 'wait_invisible'].includes(step.action);
-  const needsExpected = ['assert_text', 'assert_contains'].includes(step.action);
+  const needsTarget = !['wait', 'screenshot', 'back', 'home', 'hide_keyboard', 'tap_xy', 'launch_app', 'close_app', 'reset_app', 'adb_input', 'clipboard_input', 'press_key', 'drag'].includes(step.action);
+  const needsValue = ['input', 'swipe', 'scroll', 'wait', 'tap_xy', 'wait_invisible', 'adb_input', 'clipboard_input', 'press_key', 'drag'].includes(step.action);
+  const needsExpected = ['assert_text', 'assert_contains', 'assert_text_matches', 'assert_attribute'].includes(step.action);
 
   return (
     <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
@@ -375,11 +389,15 @@ function StepEditor({
           {needsValue && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {step.action === 'wait' ? '等待时间 (秒)' : 
+                {step.action === 'wait' ? '等待时间 (秒)' :
                  step.action === 'wait_invisible' ? '等待消失超时 (秒)' :
                  step.action === 'swipe' ? '滑动方向 (up/down/left/right)' :
-                 step.action === 'scroll' ? '滚动方向 (up/down)' :
-                 step.action === 'tap_xy' ? '点击坐标 (x,y)' : '输入值'}
+                 step.action === 'scroll' ? '滚动方向 (up/down/left/right)' :
+                 step.action === 'tap_xy' ? '点击坐标 (x,y)' :
+                 step.action === 'adb_input' ? 'ADB输入文本 (ASCII)' :
+                 step.action === 'clipboard_input' ? '剪贴板粘贴文本' :
+                 step.action === 'press_key' ? '按键 (如 1, enter, backspace)' :
+                 step.action === 'drag' ? '拖拽坐标 (x1,y1,x2,y2)' : '输入值'}
               </label>
               <div className="relative">
                 <input
@@ -394,6 +412,10 @@ function StepEditor({
                     step.action === 'tap_xy' ? '200,450' :
                     step.action === 'swipe' ? 'up' :
                     step.action === 'scroll' ? 'down' :
+                    step.action === 'adb_input' ? '1234' :
+                    step.action === 'clipboard_input' ? '粘贴内容（支持中文）' :
+                    step.action === 'press_key' ? '1 或 enter' :
+                    step.action === 'drag' ? '100,200,300,400' :
                     '支持变量 ${username} / 内置生成器 ${random_email()} ${random_phone()} ${random_text(10)} ${uuid()} ${now(%Y%m%d)}'
                   }
                 />
@@ -414,8 +436,22 @@ function StepEditor({
 
           {needsExpected && (
             <div>
+              {step.action === 'assert_attribute' && (
+                <div className="mb-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">属性名称</label>
+                  <input
+                    type="text"
+                    value={step.attribute || ''}
+                    onChange={(e) => onUpdate({ ...step, attribute: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="如 enabled, checked, text, content-desc"
+                  />
+                </div>
+              )}
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {step.action === 'assert_text' ? '预期文本' : '应包含文本'}
+                {step.action === 'assert_text' ? '预期文本' :
+                 step.action === 'assert_text_matches' ? '正则表达式' :
+                 step.action === 'assert_attribute' ? '期望属性值' : '应包含文本'}
               </label>
               <div className="relative">
                 <input

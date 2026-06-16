@@ -25,37 +25,52 @@ class AppiumRunner(BaseRunner):
 
     # Supported actions mapping
     ACTIONS = {
+        # --- Touch / Click ---
         "tap": "_action_tap",
         "click": "_action_tap",
         "double_tap": "_action_double_tap",
-        "scroll": "_action_scroll",
-        "input": "_action_input",
-        "type": "_action_input",
-        "clear": "_action_clear",
+        "long_press": "_action_long_press",
+        "tap_xy": "_action_tap_xy",
+        # --- Gestures ---
         "swipe": "_action_swipe",
+        "drag": "_action_drag",
+        "scroll": "_action_scroll",
         "scroll_down": "_action_scroll_down",
         "scroll_up": "_action_scroll_up",
         "scroll_left": "_action_scroll_left",
         "scroll_right": "_action_scroll_right",
-        "drag": "_action_drag",
-        "long_press": "_action_long_press",
+        # --- Text Input ---
+        "input": "_action_input",
+        "type": "_action_input",
+        "clear": "_action_clear",
+        "adb_input": "_action_adb_input",
+        "clipboard_input": "_action_clipboard_input",
+        "press_key": "_action_press_key",
+        # --- Navigation / System ---
         "back": "_action_back",
         "home": "_action_home",
+        "hide_keyboard": "_action_hide_keyboard",
+        # --- Wait ---
         "wait": "_action_wait",
         "wait_for": "_action_wait_for_element",
         "wait_for_element": "_action_wait_for_element",
+        "wait_for_visible": "_action_wait_for_visible",
+        "wait_for_clickable": "_action_wait_for_clickable",
         "wait_invisible": "_action_wait_invisible",
+        # --- Assertions ---
         "assert_exists": "_action_assert_exists",
         "assert_not_exists": "_action_assert_not_exists",
         "assert_visible": "_action_assert_visible",
         "assert_text": "_action_assert_text",
         "assert_contains": "_action_assert_contains",
+        "assert_attribute": "_action_assert_attribute",
+        "assert_text_matches": "_action_assert_text_matches",
+        # --- App Management ---
         "launch_app": "_action_launch_app",
         "close_app": "_action_close_app",
-        "screenshot": "_action_screenshot",
-        "tap_xy": "_action_tap_xy",
-        "hide_keyboard": "_action_hide_keyboard",
         "reset_app": "_action_reset_app",
+        # --- Capture ---
+        "screenshot": "_action_screenshot",
     }
 
     def __init__(self, context: ExecutionContext):
@@ -447,14 +462,14 @@ class AppiumRunner(BaseRunner):
         """
         coords = step.metadata.get("coords")
         if coords and isinstance(coords, dict) and ("start_x" in coords or "end_x" in coords):
-            # Explicit coordinate mode
+            # Explicit coordinate mode – guard against None values in coords
             size = self._client.get_window_size()
             self._client.swipe(
-                int(coords.get("start_x", size["width"] // 2)),
-                int(coords.get("start_y", size["height"] // 2)),
-                int(coords.get("end_x", size["width"] // 2)),
-                int(coords.get("end_y", size["height"] // 2)),
-                int(coords.get("duration", 500)),
+                int(coords.get("start_x") or size["width"] // 2),
+                int(coords.get("start_y") or size["height"] // 2),
+                int(coords.get("end_x") or size["width"] // 2),
+                int(coords.get("end_y") or size["height"] // 2),
+                int(coords.get("duration") or 500),
             )
         else:
             # Direction-based mode: treat swipe like scroll with configurable distance
@@ -509,8 +524,8 @@ class AppiumRunner(BaseRunner):
 
     def _action_long_press(self, step: TestStep) -> dict[str, Any]:
         """Long press on an element."""
-        duration = step.metadata.get("duration", 1000)
-        self._client.long_press(step.locator_type, step.locator_value, duration)
+        duration = step.metadata.get("duration") or 1000
+        self._client.long_press(step.locator_type, step.locator_value, int(duration))
         return {}
 
     def _action_back(self, step: TestStep) -> dict[str, Any]:
@@ -526,7 +541,7 @@ class AppiumRunner(BaseRunner):
     def _action_wait(self, step: TestStep) -> dict[str, Any]:
         """Wait for a specified duration."""
         import time
-        duration = step.metadata.get("duration", 1000) / 1000
+        duration = (step.metadata.get("duration") or 1000) / 1000
         time.sleep(duration)
         return {}
 
@@ -689,6 +704,124 @@ class AppiumRunner(BaseRunner):
         """Hide the on-screen keyboard."""
         self._client.hide_keyboard()
         return {}
+
+    # --- Keyboard Input (non-standard fields) ---
+
+    def _action_adb_input(self, step: TestStep) -> dict[str, Any]:
+        """Input text via ADB shell (Android only, for non-standard fields).
+
+        Uses ``adb shell input text`` which bypasses Appium's send_keys.
+        Good for verification code boxes, custom keyboards, etc.
+        ASCII text only; for Chinese/Unicode use clipboard_input.
+        """
+        text = self._resolve_variable(step.input_value)
+        self._client.adb_input_text(text)
+        return {"actual_value": text}
+
+    def _action_clipboard_input(self, step: TestStep) -> dict[str, Any]:
+        """Input text via clipboard paste (supports Chinese/Unicode).
+
+        Copies text to device clipboard, then triggers paste.
+        Works with non-standard input fields where send_keys fails.
+        """
+        text = self._resolve_variable(step.input_value)
+        self._client.clipboard_input_text(text)
+        return {"actual_value": text}
+
+    def _action_press_key(self, step: TestStep) -> dict[str, Any]:
+        """Press a single key by name or keycode.
+
+        Especially useful for digit-by-digit verification code input.
+        Supported keys: 0-9, enter, delete/backspace, tab, space, escape.
+        Can also pass a raw Android keycode number.
+
+        To input a 4-digit code "1234" digit-by-digit, create 4 steps:
+          press_key(1), press_key(2), press_key(3), press_key(4)
+        Or use metadata.keys = "1234" to press all digits in sequence.
+        """
+        # Support batch mode: press multiple keys in sequence
+        keys_str = step.metadata.get("keys") or step.input_value
+        if keys_str and len(str(keys_str)) > 1:
+            import time
+            delay = (step.metadata.get("delay") or 100) / 1000.0  # ms between keys
+            for ch in str(keys_str):
+                self._client.press_key(ch)
+                if delay > 0:
+                    time.sleep(delay)
+            return {"actual_value": keys_str}
+
+        # Single key mode
+        key = self._resolve_variable(step.input_value or "")
+        if not key:
+            raise ValueError("press_key requires input_value or metadata.keys")
+        self._client.press_key(key)
+        return {"actual_value": key}
+
+    # --- Additional Wait Actions ---
+
+    def _action_wait_for_visible(self, step: TestStep) -> dict[str, Any]:
+        """Wait for an element to become visible on screen."""
+        self._client.wait_for_visible(
+            step.locator_type,
+            step.locator_value,
+            step.timeout,
+        )
+        return {"actual_value": "visible"}
+
+    def _action_wait_for_clickable(self, step: TestStep) -> dict[str, Any]:
+        """Wait for an element to become clickable."""
+        self._client.wait_for_clickable(
+            step.locator_type,
+            step.locator_value,
+            step.timeout,
+        )
+        return {"actual_value": "clickable"}
+
+    # --- Additional Assertion Actions ---
+
+    def _action_assert_attribute(self, step: TestStep) -> dict[str, Any]:
+        """Assert that an element has a specific attribute value.
+
+        Usage in DSL step:
+          - locator_type / locator_value: element to find
+          - metadata.attribute: attribute name (e.g. "checked", "enabled", "text")
+          - expected_value or input_value: expected attribute value
+        """
+        attribute = step.metadata.get("attribute", "")
+        if not attribute:
+            raise ValueError("assert_attribute requires metadata.attribute")
+
+        actual = self._client.get_element_attribute(
+            step.locator_type, step.locator_value, attribute
+        )
+        expected = self._resolve_variable(step.expected_value or step.input_value or "")
+
+        if str(actual) != str(expected):
+            raise AssertionError(
+                f"Attribute '{attribute}' mismatch: expected '{expected}', got '{actual}'"
+            )
+        return {"actual_value": f"{attribute}={actual}"}
+
+    def _action_assert_text_matches(self, step: TestStep) -> dict[str, Any]:
+        """Assert that an element's text matches a regular expression.
+
+        Usage in DSL step:
+          - locator_type / locator_value: element to find
+          - expected_value or input_value: regex pattern
+        """
+        import re
+
+        actual = self._client.get_element_text(step.locator_type, step.locator_value)
+        pattern = self._resolve_variable(step.expected_value or step.input_value or "")
+
+        if not pattern:
+            raise ValueError("assert_text_matches requires a regex pattern")
+
+        if not re.search(pattern, actual):
+            raise AssertionError(
+                f"Text does not match pattern '{pattern}': got '{actual}'"
+            )
+        return {"actual_value": actual}
 
     # ==========================================================================
     # Helpers

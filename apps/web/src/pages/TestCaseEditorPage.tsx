@@ -80,9 +80,12 @@ const DSL_LANGUAGE_CONFIG = {
     'assertions', 'expected', 'message', 'package', 'tags', 'priority'
   ],
   actions: [
-    'launch_app', 'tap', 'long_press', 'swipe', 'input_text', 'clear_text',
-    'wait_for_element', 'assert_visible', 'assert_not_visible', 'assert_text',
-    'screenshot', 'scroll', 'back', 'home'
+    'launch_app', 'tap', 'long_press', 'double_tap', 'swipe', 'input_text', 'input', 'clear_text', 'clear',
+    'wait_for_element', 'wait_for', 'wait_invisible', 'assert_visible', 'assert_not_visible', 'assert_text',
+    'assert_contains', 'assert_text_matches', 'assert_attribute', 'assert_exists', 'assert_not_exists',
+    'screenshot', 'scroll', 'scroll_down', 'scroll_up', 'scroll_left', 'scroll_right',
+    'back', 'home', 'adb_input', 'clipboard_input', 'press_key', 'drag', 'hide_keyboard',
+    'close_app', 'reset_app',
   ],
   locatorTypes: ['id', 'xpath', 'accessibility_id', 'class', 'text', 'partial_text'],
 };
@@ -197,7 +200,7 @@ export default function TestCaseEditorPage() {
           [/#.*$/, 'comment'],
           [/@\w+:/, 'annotation'],
           [/\b(steps|assertions|action|locator|type|value|timeout|text|expected|message|package)\b:/, 'keyword'],
-          [/\b(launch_app|tap|long_press|swipe|input_text|clear_text|wait_for_element|assert_visible|assert_not_visible|assert_text|screenshot|scroll|back|home)\b/, 'action'],
+          [/\b(launch_app|tap|long_press|double_tap|swipe|input_text|input|clear_text|clear|wait_for_element|wait_for|wait_invisible|assert_visible|assert_not_visible|assert_text|assert_contains|assert_text_matches|assert_attribute|assert_exists|assert_not_exists|screenshot|scroll|scroll_down|scroll_up|scroll_left|scroll_right|back|home|adb_input|clipboard_input|press_key|drag|hide_keyboard|launch_app|close_app|reset_app)\b/, 'action'],
           [/\b(id|xpath|accessibility_id|class|text|partial_text)\b/, 'locator-type'],
           [/"[^"]*"/, 'string'],
           [/'[^']*'/, 'string'],
