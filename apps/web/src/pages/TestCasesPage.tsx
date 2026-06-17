@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, FileCode, Tag, X, Edit, Trash2, Eye, Code, Copy, Check, PanelRightOpen, PanelRightClose } from 'lucide-react';
-import { testCasesApi, devicesApi } from '../services/api';
+import { Plus, FileCode, Tag, X, Edit, Trash2, Eye, Code, Copy, Check, PanelRightOpen, PanelRightClose, Sparkles, Loader2, AlertCircle } from 'lucide-react';
+import { testCasesApi, devicesApi, aiApi } from '../services/api';
 import TestCaseStepDesigner, { TestCaseDsl } from '../components/TestCaseStepDesigner';
 import ElementInspector, { Selector } from '../components/ElementInspector';
+import AIStepPreviewModal, { AIGenerateResult, AIStep } from '../components/AIStepPreviewModal';
 import type { LocalDevice } from '../components/devices/types';
 
 // 创建/编辑测试用例弹窗
@@ -25,6 +26,11 @@ function TestCaseEditorModal({
   const [newTag, setNewTag] = useState('');
   const [showInspector, setShowInspector] = useState(false);
   const [pendingSelector, setPendingSelector] = useState<Selector | null>(null);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiResult, setAiResult] = useState<AIGenerateResult | null>(null);
+  const [showAiPreview, setShowAiPreview] = useState(false);
+  const [testScenario, setTestScenario] = useState('');
   
   const [dsl, setDsl] = useState<TestCaseDsl>({
     name: '',
@@ -89,6 +95,8 @@ function TestCaseEditorModal({
     setCodeContent('{\n  "name": "",\n  "steps": []\n}');
     setError('');
     setActiveTab('visual');
+    setTestScenario('');
+    setAiError(null);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -205,6 +213,94 @@ function TestCaseEditorModal({
     setTimeout(() => setPendingSelector(null), 3000);
   };
 
+  // AI 生成测试步骤
+  const handleAIGenerate = async () => {
+    setAiGenerating(true);
+    setAiError(null);
+
+    try {
+      // 1. 获取活跃 session
+      const sessionsRes = await devicesApi.listSessions();
+      const sessions = (sessionsRes.data?.sessions || []).filter(
+        (s: any) => s.status === 'active' || s.status === 'expired' || s.status === 'disconnected'
+      );
+
+      if (sessions.length === 0) {
+        setAiError('没有活跃的设备会话。请先在元素检查器中连接设备并启动会话。');
+        setAiGenerating(false);
+        return;
+      }
+
+      // 自动选择第一个活跃 session
+      const session = sessions[0];
+
+      // 2. 获取截图 + XML
+      const sourceRes = await devicesApi.getPageSource(session.session_id);
+      const sourceData = sourceRes.data?.data || sourceRes.data;
+
+      if (!sourceData?.success || !sourceData?.screenshot || !sourceData?.source) {
+        setAiError('无法获取页面截图或源码，请确保设备已连接且应用已启动。');
+        setAiGenerating(false);
+        return;
+      }
+
+      // 3. 调用 AI API
+      const aiRes = await aiApi.generateTestSteps({
+        screenshot_base64: sourceData.screenshot,
+        page_source_xml: sourceData.source,
+        platform: session.platform || 'android',
+        test_scenario: testScenario || undefined,
+      });
+
+      const result = aiRes.data;
+      if (!result.success) {
+        setAiError(`AI 生成失败: ${result.error || '未知错误'}`);
+        setAiGenerating(false);
+        return;
+      }
+
+      if (!result.steps || result.steps.length === 0) {
+        setAiError('AI 未生成任何步骤，可能页面元素较少或截图不清晰。');
+        setAiGenerating(false);
+        return;
+      }
+
+      // 4. 显示预览
+      setAiResult(result);
+      setShowAiPreview(true);
+      setAiGenerating(false);
+
+    } catch (err: any) {
+      setAiError(err.response?.data?.detail || err.message || 'AI 生成过程出错');
+      setAiGenerating(false);
+    }
+  };
+
+  // AI 步骤确认后加载到编辑器
+  const handleAIConfirm = (steps: AIStep[], testName?: string) => {
+    const newSteps = steps.map((s, i) => ({
+      ...s,
+      id: `step_ai_${Date.now()}_${i}`,
+    })) as any[];
+
+    setDsl((prev) => ({
+      ...prev,
+      name: testName || prev.name,
+      steps: [...prev.steps, ...newSteps],
+    }));
+
+    // 同步到代码视图
+    const updatedDsl = {
+      ...dsl,
+      name: testName || dsl.name,
+      steps: [...dsl.steps, ...newSteps],
+    };
+    setCodeContent(JSON.stringify({ name: updatedDsl.name, steps: updatedDsl.steps.map(({ id, ...r }) => r), variables: updatedDsl.variables }, null, 2));
+
+    setShowAiPreview(false);
+    setAiResult(null);
+  };
+
   const { data: devicesData } = useQuery({
     queryKey: ['localDevices'],
     queryFn: () => devicesApi.scanLocalDevices(),
@@ -245,19 +341,31 @@ function TestCaseEditorModal({
           </div>
           <div className="flex items-center gap-3">
             {activeTab === 'visual' && (
-              <button
-                type="button"
-                onClick={() => setShowInspector(!showInspector)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                  showInspector 
-                    ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-                title={showInspector ? '关闭元素检查器' : '打开元素检查器'}
-              >
-                {showInspector ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-                <span className="hidden sm:inline">元素检查器</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleAIGenerate}
+                  disabled={aiGenerating}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50"
+                  title="基于当前设备页面截图+XML，使用 AI 自动生成测试步骤"
+                >
+                  {aiGenerating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  <span className="hidden sm:inline">AI 生成</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowInspector(!showInspector)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                    showInspector 
+                      ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                  title={showInspector ? '关闭元素检查器' : '打开元素检查器'}
+                >
+                  {showInspector ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                  <span className="hidden sm:inline">元素检查器</span>
+                </button>
+              </>
             )}
             <div className="flex bg-gray-200 rounded-lg p-0.5">
               <button
@@ -301,6 +409,14 @@ function TestCaseEditorModal({
         {error && (
           <div className="mx-6 mt-4 bg-red-50 text-red-600 px-4 py-3 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+
+        {aiError && (
+          <div className="mx-6 mt-4 bg-orange-50 border border-orange-200 text-orange-700 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
+            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+            <div className="flex-1">{aiError}</div>
+            <button onClick={() => setAiError(null)} className="text-orange-400 hover:text-orange-600"><X size={14} /></button>
           </div>
         )}
 
@@ -393,6 +509,19 @@ function TestCaseEditorModal({
                   </div>
 
                   <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      AI 测试场景 <span className="text-xs text-gray-400">（可选，留空则自动识别）</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={testScenario}
+                      onChange={(e) => setTestScenario(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm"
+                      placeholder="例如：用户登录流程、商品搜索并下单、设置页面切换主题"
+                    />
+                  </div>
+
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       测试步骤 <span className="text-red-500">*</span>
                     </label>
@@ -436,6 +565,16 @@ function TestCaseEditorModal({
           </div>
         </form>
       </div>
+
+      {/* AI 预览弹窗 */}
+      {aiResult && (
+        <AIStepPreviewModal
+          isOpen={showAiPreview}
+          onClose={() => { setShowAiPreview(false); setAiResult(null); }}
+          result={aiResult}
+          onConfirm={handleAIConfirm}
+        />
+      )}
     </div>
   );
 }

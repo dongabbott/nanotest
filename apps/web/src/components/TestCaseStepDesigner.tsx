@@ -112,7 +112,11 @@ interface PressKeyAction extends BaseAction {
   delay?: number;
 }
 
-type Action = TapAction | SwipeAction | TypeAction | ScrollAction | WaitAction | AssertAction | ScreenshotAction | AiAnalyzeAction | AdbInputAction | ClipboardInputAction | PressKeyAction;
+interface BackAction extends BaseAction {
+  type: 'back';
+}
+
+type Action = TapAction | SwipeAction | TypeAction | ScrollAction | WaitAction | AssertAction | ScreenshotAction | AiAnalyzeAction | AdbInputAction | ClipboardInputAction | PressKeyAction | BackAction;
 
 export interface TestCaseDsl {
   version?: string;
@@ -141,6 +145,7 @@ const ACTION_TYPES: Record<string, { label: string; icon: any; color: string; de
   adb_input: { label: 'ADB输入', icon: Keyboard, color: 'orange', description: '通过ADB直接输入（绕过send_keys）' },
   clipboard_input: { label: '剪贴板输入', icon: ClipboardPaste, color: 'orange', description: '通过剪贴板粘贴输入（支持中文）' },
   press_key: { label: '按键输入', icon: Keyboard, color: 'orange', description: '模拟按键/逐位输入验证码' },
+  back: { label: '返回', icon: ArrowUpDown, color: 'gray', description: '返回上一页' },
 };
 
 const SELECTOR_STRATEGIES = [
@@ -207,6 +212,8 @@ const createDefaultAction = (type: string): Action => {
       return { ...base, type: 'clipboard_input', text: '' };
     case 'press_key':
       return { ...base, type: 'press_key', text: '', delay: 100 };
+    case 'back':
+      return { ...base, type: 'back' };
     default:
       return { ...base, type: 'tap', selector: { strategy: 'id', value: '' } };
   }
@@ -893,6 +900,8 @@ function StepCard({
         return action.text ? `剪贴板粘贴 "${action.text.substring(0, 20)}"` : '剪贴板输入';
       case 'press_key':
         return action.text ? `按键 "${action.text}"` : '按键输入';
+      case 'back':
+        return '返回上一页';
       default:
         return actionType?.label || '未知操作';
     }
@@ -908,6 +917,7 @@ function StepCard({
     pink: { bg: 'bg-pink-100', text: 'text-pink-600', border: 'border-pink-200' },
     cyan: { bg: 'bg-cyan-100', text: 'text-cyan-600', border: 'border-cyan-200' },
     orange: { bg: 'bg-orange-100', text: 'text-orange-600', border: 'border-orange-200' },
+    gray: { bg: 'bg-gray-100', text: 'text-gray-600', border: 'border-gray-200' },
   };
 
   const colors = colorClasses[actionType?.color || 'blue'];
@@ -1051,6 +1061,7 @@ function QuickAddToolbar({ onAdd }: { onAdd: (type: string) => void }) {
           pink: 'hover:bg-pink-100 hover:text-pink-700',
           cyan: 'hover:bg-cyan-100 hover:text-cyan-700',
           orange: 'hover:bg-orange-100 hover:text-orange-700',
+          gray: 'hover:bg-gray-100 hover:text-gray-700',
         };
         return (
           <button
@@ -1113,6 +1124,7 @@ function AddStepModal({
               pink: { bg: 'bg-pink-100', hover: 'hover:bg-pink-50 hover:border-pink-300', text: 'text-pink-600' },
               cyan: { bg: 'bg-cyan-100', hover: 'hover:bg-cyan-50 hover:border-cyan-300', text: 'text-cyan-600' },
               orange: { bg: 'bg-orange-100', hover: 'hover:bg-orange-50 hover:border-orange-300', text: 'text-orange-600' },
+              gray: { bg: 'bg-gray-100', hover: 'hover:bg-gray-50 hover:border-gray-300', text: 'text-gray-600' },
             };
             const colors = colorClasses[config.color];
             return (

@@ -354,4 +354,14 @@ export const tasksApi = {
   getStatus: (taskId: string) => apiClient.get(`/api/v1/tasks/${taskId}`),
 };
 
+// AI API
+export const aiApi = {
+  generateTestSteps: (data: {
+    screenshot_base64: string;
+    page_source_xml: string;
+    platform?: string;
+    test_scenario?: string;
+  }) => apiClient.post('/api/v1/ai/generate-test-steps', data),
+};
+
 export default apiClient;

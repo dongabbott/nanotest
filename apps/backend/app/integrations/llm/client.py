@@ -223,6 +223,99 @@ total_score = structure_score × 25% + copy_score × 25% + visual_score × 25% +
 如果无法确认，请标记为 "unknown"。
 只允许输出 JSON，不得输出额外解释文字。"""
 
+GENERATE_TEST_STEPS_PROMPT = """你是资深移动端自动化测试工程师。
+
+我将提供：
+1. 当前页面截图（以图片形式附上）
+2. 页面 XML 源码（包含元素定位信息）
+{truncation_note}
+【页面 XML 源码】
+```xml
+{xml_content}
+```
+
+平台类型：{platform}
+{scenario_context}
+
+--------------------------------
+【任务】
+--------------------------------
+
+基于截图和 XML 分析，自动生成可直接执行的自动化测试用例步骤。
+
+--------------------------------
+【生成规则】
+--------------------------------
+
+1. 步骤必须按用户操作流程排序（先看到什么→点击什么→输入什么→验证什么）
+2. 每个步骤必须有明确的 UI 元素定位，优先使用 XML 中的精确定位器：
+   - 最优：resource-id（strategy: "id"）
+   - 次优：content-desc（strategy: "accessibility_id"）
+   - 备选：text 属性（strategy: "xpath"，xpath 用 //*[text()="..."]）
+   - 最后：xpath 绝对路径
+3. 输入步骤的 text 字段应使用测试数据变量：
+   - 邮箱：${{random_email()}}
+   - 手机号：${{random_phone()}}
+   - 随机文本：${{random_text(10)}}
+   - 唯一标识：${{uuid()}}
+   - 固定值直接写字符串
+4. 必须包含验证步骤（assert），确认操作结果正确
+5. 合理添加等待步骤（wait），确保元素加载完成
+6. description 用中文简短描述每步操作意图
+
+--------------------------------
+【支持的 action type】
+--------------------------------
+
+- tap: 点击元素（需 selector）
+- type: 输入文本（需 selector + text + clearFirst）
+- scroll: 滚动（direction: up/down/left/right）
+- wait: 等待（duration 毫秒数，可选 selector + condition）
+- assert: 断言（condition: exists/not_exists/visible/text_equals/text_contains/enabled，可选 expected）
+- screenshot: 截图
+- back: 返回
+- swipe: 滑动（direction + distance 0-1）
+
+--------------------------------
+【输出格式（严格 JSON，不要输出额外文字）】
+--------------------------------
+
+```json
+{{
+  "test_name": "测试用例名称",
+  "description": "测试描述",
+  "steps": [
+    {{
+      "type": "tap",
+      "selector": {{ "strategy": "id", "value": "com.example:id/btn_login" }},
+      "description": "点击登录按钮"
+    }},
+    {{
+      "type": "type",
+      "selector": {{ "strategy": "id", "value": "com.example:id/input_username" }},
+      "text": "${{random_email()}}",
+      "clearFirst": true,
+      "description": "输入随机邮箱地址"
+    }},
+    {{
+      "type": "wait",
+      "duration": 2000,
+      "description": "等待页面加载"
+    }},
+    {{
+      "type": "assert",
+      "condition": "visible",
+      "selector": {{ "strategy": "id", "value": "com.example:id/welcome_text" }},
+      "description": "验证欢迎文字显示"
+    }}
+  ],
+  "confidence": 0.85,
+  "notes": "补充说明或建议（如需要额外验证的场景）"
+}}
+```
+
+只允许输出 JSON，不得输出额外解释文字。"""
+
 COMPARE_PROMPT = """请对比两张移动端 App 截图（第一张为基线版本，第二张为当前版本），用中文输出差异分析：
 
 对比维度：
@@ -549,6 +642,71 @@ class LLMClient:
             return {
                 "success": True,
                 "result": self._parse_json_response(output_text),
+                "model": self.vl_model,
+                "latency_ms": latency_ms,
+            }
+
+        except Exception as e:
+            latency_ms = int((time.time() - start_time) * 1000)
+            return {
+                "success": False,
+                "error": str(e),
+                "model": self.vl_model,
+                "latency_ms": latency_ms,
+            }
+
+    # ------------------------------------------------------------------
+    # Public API: generate test steps from screenshot + XML
+    # ------------------------------------------------------------------
+
+    async def generate_test_steps(
+        self,
+        screenshot_bytes: bytes,
+        page_source_xml: str,
+        platform: str = "android",
+        test_scenario: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate executable test case steps from a page screenshot and XML."""
+        start_time = time.time()
+
+        # Truncate large XML
+        max_xml_chars = 60000
+        xml_content = page_source_xml
+        truncation_note = ""
+        if len(xml_content) > max_xml_chars:
+            xml_content = xml_content[:max_xml_chars]
+            truncation_note = "\n（注意：XML 内容因长度过大已截断，请基于已提供的部分进行分析）\n"
+
+        scenario_context = f"测试场景：{test_scenario}" if test_scenario else "测试场景：自动识别页面功能并生成核心测试流程"
+
+        prompt_text = GENERATE_TEST_STEPS_PROMPT.format(
+            xml_content=xml_content,
+            truncation_note=truncation_note,
+            platform=platform,
+            scenario_context=scenario_context,
+        )
+
+        try:
+            output_text = await self._chat_multimodal(
+                images=[screenshot_bytes],
+                prompt_text=prompt_text,
+                system_prompt=VISION_SYSTEM_PROMPT,
+            )
+            latency_ms = int((time.time() - start_time) * 1000)
+
+            result = self._parse_json_response(output_text)
+
+            # Ensure steps is a list
+            if isinstance(result, dict) and "steps" in result:
+                steps = result["steps"]
+                if not isinstance(steps, list):
+                    result["steps"] = []
+            else:
+                result = {"test_name": "AI Generated Test", "steps": [], "confidence": 0.0, "notes": "No steps generated"}
+
+            return {
+                "success": True,
+                "result": result,
                 "model": self.vl_model,
                 "latency_ms": latency_ms,
             }
